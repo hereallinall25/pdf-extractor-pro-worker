@@ -81,8 +81,9 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
             },
         ],
         generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 2048,
+            temperature: 0.1, // Lower temperature for more consistent, less creative output
+            maxOutputTokens: 8192, // Increased for long question papers
+            responseMimeType: 'application/json',
         },
     };
 
@@ -113,7 +114,18 @@ function parseResponse(text) {
     // 1. Try JSON First
     try {
         const jsonString = text.replace(/```json\n?|```/g, '').trim();
-        return JSON.parse(jsonString);
+        const parsed = JSON.parse(jsonString);
+
+        // If it's already an array, return it
+        if (Array.isArray(parsed)) return parsed;
+
+        // If it's an object with a likely data key, return the array inside it
+        if (parsed.questions && Array.isArray(parsed.questions)) return parsed.questions;
+        if (parsed.data && Array.isArray(parsed.data)) return parsed.data;
+        if (parsed.results && Array.isArray(parsed.results)) return parsed.results;
+
+        // Otherwise, return it as a single-row array for safety
+        return [parsed];
     } catch (e) {
         console.log("JSON parse failed, attempting pipe-separated parsing...");
     }
@@ -121,18 +133,34 @@ function parseResponse(text) {
     // 2. Try Pipe-Separated Values (PSV)
     try {
         const lines = text.trim().split('\n').filter(line => line.trim() !== '');
-        if (lines.length < 2) throw new Error("Not enough lines for a table");
+        if (lines.length === 0) throw new Error("Empty response");
 
-        if (!lines[0].includes('|')) throw new Error("No pipe separator found");
+        const standardHeaders = [
+            "S.No", "Question", "Paper", "Subject", "Month Year",
+            "Type", "Section", "University Name", "CBME", "Supplementary"
+        ];
 
-        const headers = lines[0].split('|').map(h => h.trim()).filter(h => h !== '');
+        let headers;
+        let startIdx;
+
+        // Detect if first line is a header or data
+        const firstLine = lines[0].toLowerCase();
+        if (firstLine.includes('s.no') || firstLine.includes('question')) {
+            headers = lines[0].split('|').map(h => h.trim()).filter(h => h !== '');
+            startIdx = 1;
+        } else {
+            // No header found, use standard schema
+            headers = standardHeaders;
+            startIdx = 0;
+        }
+
         const data = [];
-
-        for (let i = 1; i < lines.length; i++) {
-            const values = lines[i].split('|').map(v => v.trim()).filter(v => v !== '');
-            if (values.length > 0) {
+        for (let i = startIdx; i < lines.length; i++) {
+            const values = lines[i].split('|').map(v => v.trim());
+            if (values.length > 1) { // Ensure it's a valid row
                 const row = {};
                 headers.forEach((header, index) => {
+                    // Map values to headers; if extra values exist, ignore them; if missing, use blank
                     row[header] = values[index] || '';
                 });
                 data.push(row);
