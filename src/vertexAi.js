@@ -7,9 +7,10 @@ async function getAccessToken(env) {
 
     let credentials;
     try {
-        credentials = JSON.parse(env.GOOGLE_APPLICATION_CREDENTIALS);
+        const credsStr = (env.GOOGLE_APPLICATION_CREDENTIALS || '').trim();
+        credentials = JSON.parse(credsStr);
     } catch (e) {
-        throw new Error('GOOGLE_APPLICATION_CREDENTIALS is not a valid JSON string');
+        throw new Error(`GOOGLE_APPLICATION_CREDENTIALS is not a valid JSON string. (Error: ${e.message})`);
     }
 
     const { client_email, private_key } = credentials;
