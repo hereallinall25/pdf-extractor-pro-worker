@@ -19,15 +19,17 @@ app.post('/api/extract', async (c) => {
         }
 
         const arrayBuffer = await pdfFile.arrayBuffer();
-        const pdfBase64 = btoa(
-            new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-        );
+        const pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
 
         const extractedData = await extractFromPdf(pdfBase64, customPrompt, c.env);
         return c.json(extractedData);
     } catch (error) {
         console.error('Extraction error:', error);
-        return c.json({ error: error.message }, 500);
+        return c.json({
+            error: 'Server Error during extraction',
+            details: error.message,
+            stack: error.stack // Helpful for debugging in the browser console
+        }, 500);
     }
 });
 
