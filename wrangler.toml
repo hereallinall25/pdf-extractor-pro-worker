@@ -1,0 +1,13 @@
+name = "pdf-extractor-pro-worker"
+main = "src/index.js"
+compatibility_date = "2024-04-03"
+compatibility_flags = [ "nodejs_compat" ]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pdf_extractor_db"
+database_id = "YOUR_D1_DATABASE_ID_HERE"
+
+[vars]
+GOOGLE_CLOUD_LOCATION = "us-central1"
+# GOOGLE_CLOUD_PROJECT should be added as a secret: wrangler secret put GOOGLE_CLOUD_PROJECT
