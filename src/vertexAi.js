@@ -59,21 +59,24 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
     const accessToken = await getAccessToken(env);
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
+    const parts = [];
+    if (pdfBase64) {
+        parts.push({
+            inlineData: {
+                mimeType: 'application/pdf',
+                data: pdfBase64,
+            },
+        });
+    }
+    parts.push({
+        text: customPrompt || 'Extract all relevant information from this question paper and format it as a JSON object suitable for an Excel sheet.',
+    });
+
     const requestBody = {
         contents: [
             {
                 role: 'user',
-                parts: [
-                    {
-                        inlineData: {
-                            mimeType: 'application/pdf',
-                            data: pdfBase64,
-                        },
-                    },
-                    {
-                        text: customPrompt || 'Extract all relevant information from this question paper and format it as a JSON object suitable for an Excel sheet.',
-                    },
-                ],
+                parts: parts,
             },
         ],
         generationConfig: {

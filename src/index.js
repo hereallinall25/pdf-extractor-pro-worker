@@ -7,6 +7,30 @@ const app = new Hono();
 
 app.use('*', cors());
 
+app.get('/', (c) => {
+    return c.json({ status: 'API is running', version: '2.0.1 (Cloudflare Native)' });
+});
+
+// Test Endpoint for Vertex AI
+app.get('/api/test-vertex', async (c) => {
+    try {
+        const text = 'Say hello in 5 words.';
+        const result = await extractFromPdf(null, text, c.env);
+        return c.json({ success: true, result });
+    } catch (error) {
+        return c.json({
+            success: false,
+            error: error.message,
+            stack: error.stack,
+            env_check: {
+                has_project: !!c.env.GOOGLE_CLOUD_PROJECT,
+                has_location: !!c.env.GOOGLE_CLOUD_LOCATION,
+                has_creds: !!c.env.GOOGLE_APPLICATION_CREDENTIALS
+            }
+        }, 500);
+    }
+});
+
 // Extract PDF Data
 app.post('/api/extract', async (c) => {
     try {
