@@ -1,10 +1,25 @@
 import { VertexAI } from '@google-cloud/vertexai';
 
 export async function extractFromPdf(pdfBase64, customPrompt, env) {
-    const project = env.GOOGLE_CLOUD_PROJECT || 'your-project-id';
-    const location = env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+    const project = env.GOOGLE_CLOUD_PROJECT || 'pdf-extractor-pro-483018';
+    const location = env.GOOGLE_CLOUD_LOCATION || 'asia-south1';
 
-    const vertexAI = new VertexAI({ project: project, location: location });
+    // Auth configuration
+    const authOptions = {};
+    if (env.GOOGLE_APPLICATION_CREDENTIALS) {
+        try {
+            // If the user pastes the entire JSON as a secret
+            authOptions.credentials = JSON.parse(env.GOOGLE_APPLICATION_CREDENTIALS);
+        } catch (e) {
+            console.error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS. Ensure it is a valid JSON string.');
+        }
+    }
+
+    const vertexAI = new VertexAI({
+        project: project,
+        location: location,
+        ...authOptions
+    });
     const modelName = 'gemini-2.5-flash-lite';
 
     const generativeModel = vertexAI.getGenerativeModel({

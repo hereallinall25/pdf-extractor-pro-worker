@@ -6,8 +6,8 @@ compatibility_flags = [ "nodejs_compat" ]
 [[d1_databases]]
 binding = "DB"
 database_name = "pdf_extractor_db"
-database_id = "YOUR_D1_DATABASE_ID_HERE"
+database_id = "1689fc19-b10d-490a-966e-69946c77af28"
 
 [vars]
-GOOGLE_CLOUD_LOCATION = "us-central1"
+GOOGLE_CLOUD_LOCATION = "asia-south1"
 # GOOGLE_CLOUD_PROJECT should be added as a secret: wrangler secret put GOOGLE_CLOUD_PROJECT
