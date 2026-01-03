@@ -1,7 +1,6 @@
 CREATE TABLE IF NOT EXISTS prompts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
-  subject TEXT,
   university TEXT,
   state TEXT,
   type TEXT,

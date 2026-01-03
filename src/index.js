@@ -87,22 +87,22 @@ app.get('/api/prompts', async (c) => {
 });
 
 app.post('/api/prompts', async (c) => {
-    const { name, subject, university, state, type, content } = await c.req.json();
+    const { name, university, state, type, content } = await c.req.json();
     const result = await c.env.DB.prepare(
-        'INSERT INTO prompts (name, subject, university, state, type, content) VALUES (?, ?, ?, ?, ?, ?) RETURNING *'
+        'INSERT INTO prompts (name, university, state, type, content) VALUES (?, ?, ?, ?, ?) RETURNING *'
     )
-        .bind(name, subject, university, state, type, content)
+        .bind(name, university, state, type, content)
         .first();
     return c.json(result);
 });
 
 app.put('/api/prompts/:id', async (c) => {
     const id = c.req.param('id');
-    const { name, subject, university, state, type, content } = await c.req.json();
+    const { name, university, state, type, content } = await c.req.json();
     const result = await c.env.DB.prepare(
-        'UPDATE prompts SET name = ?, subject = ?, university = ?, state = ?, type = ?, content = ? WHERE id = ? RETURNING *'
+        'UPDATE prompts SET name = ?, university = ?, state = ?, type = ?, content = ? WHERE id = ? RETURNING *'
     )
-        .bind(name, subject, university, state, type, content, id)
+        .bind(name, university, state, type, content, id)
         .first();
     return c.json(result);
 });
