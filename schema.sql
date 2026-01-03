@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS prompts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   subject TEXT,
+  university TEXT,
+  state TEXT,
   type TEXT,
   content TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
