@@ -1,4 +1,5 @@
 name = "pdf-extractor-pro-worker"
+account_id = "7c5f549c00544db40ac09989afa5f6fb"
 main = "src/index.js"
 compatibility_date = "2024-12-30"
 compatibility_flags = [ "nodejs_compat" ]
@@ -7,7 +8,7 @@ compatibility_flags = [ "nodejs_compat" ]
 binding = "DB"
 database_name = "pdf_extractor_db"
 database_id = "1689fc19-b10d-490a-966e-69946c77af28"
-
+account_id = "7c5f549c00544db40ac09989afa5f6fb"
 [vars]
 GOOGLE_CLOUD_LOCATION = "us-central1"
 # GOOGLE_CLOUD_PROJECT should be added as a secret: wrangler secret put GOOGLE_CLOUD_PROJECT

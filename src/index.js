@@ -82,35 +82,55 @@ app.post('/api/download-excel', async (c) => {
 
 // Prompt Library (D1)
 app.get('/api/prompts', async (c) => {
-    const { results } = await c.env.DB.prepare('SELECT * FROM prompts ORDER BY created_at DESC').all();
-    return c.json(results);
+    try {
+        const { results } = await c.env.DB.prepare('SELECT * FROM prompts ORDER BY created_at DESC').all();
+        return c.json(results || []);
+    } catch (error) {
+        console.error('Fetch prompts error:', error);
+        return c.json({ error: error.message }, 500);
+    }
 });
 
 app.post('/api/prompts', async (c) => {
-    const { name, university, state, type, content } = await c.req.json();
-    const result = await c.env.DB.prepare(
-        'INSERT INTO prompts (name, university, state, type, content) VALUES (?, ?, ?, ?, ?) RETURNING *'
-    )
-        .bind(name, university, state, type, content)
-        .first();
-    return c.json(result);
+    try {
+        const { name, university, state, type, content } = await c.req.json();
+        const result = await c.env.DB.prepare(
+            'INSERT INTO prompts (name, university, state, type, content) VALUES (?, ?, ?, ?, ?) RETURNING *'
+        )
+            .bind(name, university, state, type, content)
+            .first();
+        return c.json(result);
+    } catch (error) {
+        console.error('Create prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
 });
 
 app.put('/api/prompts/:id', async (c) => {
-    const id = c.req.param('id');
-    const { name, university, state, type, content } = await c.req.json();
-    const result = await c.env.DB.prepare(
-        'UPDATE prompts SET name = ?, university = ?, state = ?, type = ?, content = ? WHERE id = ? RETURNING *'
-    )
-        .bind(name, university, state, type, content, id)
-        .first();
-    return c.json(result);
+    try {
+        const id = c.req.param('id');
+        const { name, university, state, type, content } = await c.req.json();
+        const result = await c.env.DB.prepare(
+            'UPDATE prompts SET name = ?, university = ?, state = ?, type = ?, content = ? WHERE id = ? RETURNING *'
+        )
+            .bind(name, university, state, type, content, id)
+            .first();
+        return c.json(result);
+    } catch (error) {
+        console.error('Update prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
 });
 
 app.delete('/api/prompts/:id', async (c) => {
-    const id = c.req.param('id');
-    await c.env.DB.prepare('DELETE FROM prompts WHERE id = ?').bind(id).run();
-    return c.json({ success: true });
+    try {
+        const id = c.req.param('id');
+        await c.env.DB.prepare('DELETE FROM prompts WHERE id = ?').bind(id).run();
+        return c.json({ success: true });
+    } catch (error) {
+        console.error('Delete prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
 });
 
 export default app;
