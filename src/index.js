@@ -6,6 +6,21 @@ import { generateExcel } from './excelService';
 const app = new Hono();
 
 app.use('*', cors());
+// Global Error Handler to ensure CORS headers are always present
+app.onError((err, c) => {
+    console.error('Unhandled Error:', err);
+    // Explicitly add CORS headers for browsers
+    const headers = new Headers();
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cf-Access-Authenticated-User-Email');
+
+    return c.json({
+        error: 'Internal Server Error',
+        message: err.message,
+        stack: err.stack,
+    }, 500, Object.fromEntries(headers));
+});
 
 // Helper to get user email and log usage
 async function logUsage(env, c, eventType, tokens, fileCount = 0) {
