@@ -49,18 +49,26 @@ app.get('/api/test-vertex', async (c) => {
 app.post('/api/extract', async (c) => {
     try {
         const body = await c.req.parseBody();
-        const pdfFile = body.pdf;
+        const pdfFile = body.file; // Matches frontend
         const customPrompt = body.prompt;
 
         if (!pdfFile || !(pdfFile instanceof File)) {
-            return c.json({ error: 'No PDF file uploaded' }, 400);
+            return c.json({ error: 'No file uploaded' }, 400);
         }
 
         const arrayBuffer = await pdfFile.arrayBuffer();
         const pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
 
-        const extractedData = await extractFromPdf(pdfBase64, customPrompt, c.env);
-        return c.json(extractedData);
+        const { data, usage } = await extractFromPdf(pdfBase64, customPrompt, c.env);
+
+        // Log usage for analytics
+        await logUsage(c.env, c, 'extraction', {
+            input: usage.promptTokenCount,
+            output: usage.candidatesTokenCount,
+            total: usage.totalTokenCount
+        }, 1);
+
+        return c.json({ data, usage });
     } catch (error) {
         console.error('Extraction error:', error);
         return c.json({
@@ -160,6 +168,14 @@ app.post('/api/chat', async (c) => {
         const validAttachments = (attachments || []).filter(att => att.mimeType && att.base64);
 
         const result = await chatWithGemini(messages, validAttachments, promptContext || '', c.env);
+
+        // Log usage for analytics
+        await logUsage(c.env, c, 'chat', {
+            input: result.usage.input_tokens,
+            output: result.usage.output_tokens,
+            total: result.usage.total_tokens
+        });
+
         return c.json(result);
     } catch (error) {
         console.error('Chat error:', error);
