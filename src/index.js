@@ -160,7 +160,7 @@ app.get('/api/chat-prompts', async (c) => {
         return c.json(results || []);
     } catch (error) {
         console.error('Fetch chat prompts error:', error);
-        return c.json({ error: error.message }, 500);
+        return c.json({ error: error.message, stack: error.stack }, 500);
     }
 });
 
@@ -175,7 +175,7 @@ app.post('/api/chat-prompts', async (c) => {
         return c.json(result);
     } catch (error) {
         console.error('Create chat prompt error:', error);
-        return c.json({ error: error.message }, 500);
+        return c.json({ error: error.message, stack: error.stack }, 500);
     }
 });
 
