@@ -153,4 +153,57 @@ app.post('/api/chat', async (c) => {
     }
 });
 
+// Chat Prompts Library (D1)
+app.get('/api/chat-prompts', async (c) => {
+    try {
+        const { results } = await c.env.DB.prepare('SELECT * FROM chat_prompts ORDER BY created_at DESC').all();
+        return c.json(results || []);
+    } catch (error) {
+        console.error('Fetch chat prompts error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+app.post('/api/chat-prompts', async (c) => {
+    try {
+        const { name, type, content } = await c.req.json();
+        const result = await c.env.DB.prepare(
+            'INSERT INTO chat_prompts (name, type, content) VALUES (?, ?, ?) RETURNING *'
+        )
+            .bind(name, type, content)
+            .first();
+        return c.json(result);
+    } catch (error) {
+        console.error('Create chat prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+app.put('/api/chat-prompts/:id', async (c) => {
+    try {
+        const id = c.req.param('id');
+        const { name, type, content } = await c.req.json();
+        const result = await c.env.DB.prepare(
+            'UPDATE chat_prompts SET name = ?, type = ?, content = ? WHERE id = ? RETURNING *'
+        )
+            .bind(name, type, content, id)
+            .first();
+        return c.json(result);
+    } catch (error) {
+        console.error('Update chat prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+app.delete('/api/chat-prompts/:id', async (c) => {
+    try {
+        const id = c.req.param('id');
+        await c.env.DB.prepare('DELETE FROM chat_prompts WHERE id = ?').bind(id).run();
+        return c.json({ success: true });
+    } catch (error) {
+        console.error('Delete chat prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
 export default app;
