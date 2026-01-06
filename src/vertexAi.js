@@ -119,6 +119,87 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
     };
 }
 
+/**
+ * Multi-turn chat with Gemini, supporting file attachments and prompt context.
+ * @param {Array} messages - Array of { role: 'user' | 'model', content: string }
+ * @param {Array} attachments - Array of { mimeType: string, base64: string }
+ * @param {string} promptContext - Optional system prompt/context
+ * @param {object} env - Cloudflare environment bindings
+ */
+export async function chatWithGemini(messages, attachments, promptContext, env) {
+    const project = env.GOOGLE_CLOUD_PROJECT || 'pdf-extractor-pro-483018';
+    const location = env.GOOGLE_CLOUD_LOCATION || 'asia-south1';
+    const model = 'gemini-2.5-flash-lite';
+
+    const accessToken = await getAccessToken(env);
+    const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google/models/${model}:generateContent`;
+
+    // Build the contents array for multi-turn conversation
+    const contents = [];
+
+    // Add system context as the first "user" message if provided
+    if (promptContext) {
+        contents.push({
+            role: 'user',
+            parts: [{ text: `[System Context - Current Prompt]:\n${promptContext}\n\n---\nYou are a helpful AI assistant. Use the above prompt as context to help the user refine it or answer questions about attached files.` }]
+        });
+        contents.push({
+            role: 'model',
+            parts: [{ text: 'Understood. I have the prompt context loaded. How can I help you?' }]
+        });
+    }
+
+    // Add conversation history
+    for (const msg of messages) {
+        const parts = [];
+
+        // For the latest user message, include attachments
+        if (msg.role === 'user' && msg === messages[messages.length - 1] && attachments && attachments.length > 0) {
+            for (const att of attachments) {
+                parts.push({
+                    inlineData: {
+                        mimeType: att.mimeType,
+                        data: att.base64
+                    }
+                });
+            }
+        }
+
+        parts.push({ text: msg.content });
+        contents.push({ role: msg.role, parts });
+    }
+
+    const requestBody = {
+        contents,
+        generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 4096
+        }
+    };
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Gemini API Error: ${JSON.stringify(errorData)}`);
+    }
+
+    const data = await response.json();
+    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+        throw new Error('Malformed response from Gemini: ' + JSON.stringify(data));
+    }
+
+    const reply = data.candidates[0].content.parts[0].text;
+    return { reply, usage: data.usageMetadata };
+}
+
 function parseResponse(text) {
     // 1. Try JSON First
     try {

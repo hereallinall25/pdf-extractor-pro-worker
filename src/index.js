@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { extractFromPdf } from './vertexAi';
+import { extractFromPdf, chatWithGemini } from './vertexAi';
 import { generateExcel } from './excelService';
 
 const app = new Hono();
@@ -129,6 +129,26 @@ app.delete('/api/prompts/:id', async (c) => {
         return c.json({ success: true });
     } catch (error) {
         console.error('Delete prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// AI Chat Assistant
+app.post('/api/chat', async (c) => {
+    try {
+        const { messages, attachments, promptContext } = await c.req.json();
+
+        if (!messages || !Array.isArray(messages) || messages.length === 0) {
+            return c.json({ error: 'Messages array is required' }, 400);
+        }
+
+        // Validate attachments (optional)
+        const validAttachments = (attachments || []).filter(att => att.mimeType && att.base64);
+
+        const result = await chatWithGemini(messages, validAttachments, promptContext || '', c.env);
+        return c.json(result);
+    } catch (error) {
+        console.error('Chat error:', error);
         return c.json({ error: error.message }, 500);
     }
 });
