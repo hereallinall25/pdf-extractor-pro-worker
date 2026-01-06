@@ -1,6 +1,5 @@
-DROP TABLE IF EXISTS prompts;
-
-CREATE TABLE prompts (
+-- Create extraction prompts table if it doesn't exist
+CREATE TABLE IF NOT EXISTS prompts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   university TEXT,
@@ -10,9 +9,8 @@ CREATE TABLE prompts (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-DROP TABLE IF EXISTS chat_prompts;
-
-CREATE TABLE chat_prompts (
+-- Create chat assistant prompts table if it doesn't exist
+CREATE TABLE IF NOT EXISTS chat_prompts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   type TEXT NOT NULL,
