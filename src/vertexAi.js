@@ -70,10 +70,10 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
         });
     }
     parts.push({
-        text: customPrompt || 'Extract all relevant information from this question paper and format it as a JSON object suitable for an Excel sheet.',
+        text: customPrompt || 'Extract all relevant information from this question paper. Format the output as a JSON array of objects. For very long papers, you may use a Pipe-Separated list (PSV) with headers to stay within limits. Columns: S.No, Question, Paper, Subject, Month Year, Type, Section, University Name, CBME, Supplementary.',
     });
 
-    const requestBody = {
+    let requestBody = {
         contents: [
             {
                 role: 'user',
@@ -81,9 +81,8 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
             },
         ],
         generationConfig: {
-            temperature: 0.1, // Lower temperature for more consistent, less creative output
-            maxOutputTokens: 8192, // Increased for long question papers
-            responseMimeType: 'application/json',
+            temperature: 0.1,
+            maxOutputTokens: 8192,
         },
     };
 
@@ -101,20 +100,25 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
         throw new Error(`Vertex AI Error: ${JSON.stringify(errorData)}`);
     }
 
-    const data = await response.json();
-    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-        throw new Error('Malformed response from Vertex AI: ' + JSON.stringify(data));
+    let responseData = await response.json();
+    if (!responseData.candidates || !responseData.candidates[0] || !responseData.candidates[0].content) {
+        throw new Error('Malformed response from Vertex AI: ' + JSON.stringify(responseData));
     }
 
-    const text = data.candidates[0].content.parts[0].text;
+    const text = responseData.candidates[0].content.parts[0].text;
     const extractedData = parseResponse(text);
 
     // Optimization: Clear large objects immediately
     const usageInfo = {
-        ...data.usageMetadata,
+        ...responseData.usageMetadata,
         modelLimit: 1048576,
         maxOutputTokens: requestBody.generationConfig.maxOutputTokens
     };
+
+    // Nullify huge objects to free memory in Cloudflare Worker
+    pdfBase64 = null;
+    requestBody = null;
+    responseData = null;
 
     return {
         data: extractedData,
@@ -204,67 +208,77 @@ export async function chatWithGemini(messages, attachments, promptContext, env) 
 }
 
 function parseResponse(text) {
-    // 1. Try JSON First
+    if (!text) throw new Error("Empty response from AI");
+
+    // 1. Try to extract JSON from code blocks or loose text
+    let jsonString = text.trim();
+    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (jsonMatch) {
+        jsonString = jsonMatch[1] || jsonMatch[0];
+    } else {
+        // Fallback: strip backticks if any
+        jsonString = jsonString.replace(/```json\n?|```/g, '').trim();
+    }
+
     try {
-        const jsonString = text.replace(/```json\n?|```/g, '').trim();
         const parsed = JSON.parse(jsonString);
-
-        // If it's already an array, return it
         if (Array.isArray(parsed)) return parsed;
-
-        // If it's an object with a likely data key, return the array inside it
         if (parsed.questions && Array.isArray(parsed.questions)) return parsed.questions;
         if (parsed.data && Array.isArray(parsed.data)) return parsed.data;
         if (parsed.results && Array.isArray(parsed.results)) return parsed.results;
-
-        // Otherwise, return it as a single-row array for safety
         return [parsed];
     } catch (e) {
-        console.log("JSON parse failed, attempting pipe-separated parsing...");
+        // If JSON fails, it might be truncated. Try to "fix" it if it's an array
+        if (jsonString.startsWith('[') && !jsonString.endsWith(']')) {
+            try {
+                const lastBrace = jsonString.lastIndexOf('}');
+                if (lastBrace !== -1) {
+                    const fixed = jsonString.substring(0, lastBrace + 1) + ']';
+                    return JSON.parse(fixed);
+                }
+            } catch (innerE) { /* ignore */ }
+        }
+        console.log("JSON parse failed or truncated, attempting PSV parsing...");
     }
 
     // 2. Try Pipe-Separated Values (PSV)
     try {
-        const lines = text.trim().split('\n').filter(line => line.trim() !== '');
-        if (lines.length === 0) throw new Error("Empty response");
+        const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l !== '');
+        if (lines.length === 0) throw new Error("No text lines found");
 
         const standardHeaders = [
             "S.No", "Question", "Paper", "Subject", "Month Year",
             "Type", "Section", "University Name", "CBME", "Supplementary"
         ];
 
-        let headers;
-        let startIdx;
+        let headers = standardHeaders;
+        let startIdx = 0;
 
-        // Detect if first line is a header or data
+        // Header detection
         const firstLine = lines[0].toLowerCase();
-        if (firstLine.includes('s.no') || firstLine.includes('question')) {
+        if (firstLine.includes('|') && (firstLine.includes('question') || firstLine.includes('s.no'))) {
             headers = lines[0].split('|').map(h => h.trim()).filter(h => h !== '');
             startIdx = 1;
-        } else {
-            // No header found, use standard schema
-            headers = standardHeaders;
-            startIdx = 0;
         }
 
         const data = [];
         for (let i = startIdx; i < lines.length; i++) {
-            const values = lines[i].split('|').map(v => v.trim());
-            if (values.length > 1) { // Ensure it's a valid row
-                const row = {};
-                headers.forEach((header, index) => {
-                    // Map values to headers; if extra values exist, ignore them; if missing, use blank
-                    row[header] = values[index] || '';
-                });
-                data.push(row);
-            }
+            const line = lines[i];
+            if (!line.includes('|')) continue;
+
+            const values = line.split('|').map(v => v.trim());
+            const row = {};
+            headers.forEach((header, index) => {
+                row[header] = values[index] || '';
+            });
+            data.push(row);
         }
 
-        if (data.length === 0) throw new Error("No data rows extracted");
-        return data;
+        if (data.length > 0) return data;
 
     } catch (e) {
-        console.error('Failed to parse response:', text);
-        throw new Error('Could not parse AI response. Raw Text: ' + text.substring(0, 500));
+        console.error('PSV parse failed:', e);
     }
+
+    throw new Error('Could not parse AI response. It may be too long or truncated. Try using a shorter prompt or manually re-running this file. Raw snippet: ' + text.substring(0, 300) + '...');
 }
