@@ -7,6 +7,20 @@ const app = new Hono();
 
 app.use('*', cors());
 
+// Helper to get user email and log usage
+async function logUsage(env, c, eventType, tokens, fileCount = 0) {
+    try {
+        const userEmail = c.req.header('Cf-Access-Authenticated-User-Email') || 'anonymous@internal.com';
+        await env.DB.prepare(
+            'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+            .bind(userEmail, eventType, tokens.input || 0, tokens.output || 0, tokens.total || 0, fileCount)
+            .run();
+    } catch (error) {
+        console.error('Logging error:', error);
+    }
+}
+
 app.get('/', (c) => {
     return c.json({ status: 'API is running', version: '2.0.1 (Cloudflare Native)' });
 });
@@ -202,6 +216,54 @@ app.delete('/api/chat-prompts/:id', async (c) => {
         return c.json({ success: true });
     } catch (error) {
         console.error('Delete chat prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// Admin Analytics Endpoint
+app.get('/api/admin/analytics', async (c) => {
+    try {
+        // Get Daily Totals
+        const dailyTotals = await c.env.DB.prepare(`
+            SELECT 
+                DATE(created_at) as date,
+                SUM(token_total) as total_tokens,
+                COUNT(CASE WHEN event_type = 'extraction' THEN 1 END) as extractions,
+                COUNT(CASE WHEN event_type = 'chat' THEN 1 END) as chats,
+                COUNT(DISTINCT user_email) as active_users
+            FROM usage_logs
+            GROUP BY DATE(created_at)
+            ORDER BY DATE(created_at) DESC
+            LIMIT 30
+        `).all();
+
+        // Get User Breakdown (Today)
+        const userBreakdown = await c.env.DB.prepare(`
+            SELECT 
+                user_email,
+                SUM(token_total) as total_tokens,
+                COUNT(*) as events,
+                MAX(created_at) as last_active
+            FROM usage_logs
+            WHERE DATE(created_at) = DATE('now')
+            GROUP BY user_email
+            ORDER BY total_tokens DESC
+        `).all();
+
+        // Get Recent Activity
+        const recentActivity = await c.env.DB.prepare(`
+            SELECT * FROM usage_logs 
+            ORDER BY created_at DESC 
+            LIMIT 20
+        `).all();
+
+        return c.json({
+            dailyTotals: dailyTotals.results || [],
+            userBreakdown: userBreakdown.results || [],
+            recentActivity: recentActivity.results || []
+        });
+    } catch (error) {
+        console.error('Analytics error:', error);
         return c.json({ error: error.message }, 500);
     }
 });
