@@ -109,13 +109,16 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
     const text = data.candidates[0].content.parts[0].text;
     const extractedData = parseResponse(text);
 
+    // Optimization: Clear large objects immediately
+    const usageInfo = {
+        ...data.usageMetadata,
+        modelLimit: 1048576,
+        maxOutputTokens: requestBody.generationConfig.maxOutputTokens
+    };
+
     return {
         data: extractedData,
-        usage: {
-            ...data.usageMetadata,
-            modelLimit: 1048576, // 1M tokens for Gemini 2.5 Flash-Lite
-            maxOutputTokens: requestBody.generationConfig.maxOutputTokens
-        }
+        usage: usageInfo
     };
 }
 
