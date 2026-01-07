@@ -84,7 +84,7 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
         ],
         generationConfig: {
             temperature: 0.1,
-            maxOutputTokens: 65536,
+            maxOutputTokens: 65535,
         },
     };
 
