@@ -74,7 +74,7 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
             {
                 role: 'user',
                 parts: [
-                    ...parts.slice(0, -1),
+                    ...parts,
                     {
                         text: (customPrompt || 'Extract all relevant information from this question paper. Format the output as a JSON array of objects. For very long papers, you may use a Pipe-Separated list (PSV) with headers to stay within limits. Columns: S.No, Question, Paper, Subject, Month Year, Type, Section, University Name, CBME, Supplementary.') +
                             '\n\nIMPORTANT: There are multiple question papers in this document. Extract EVERY SINGLE ONE. Do not skip any. Provide the complete output.'
