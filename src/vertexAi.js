@@ -76,8 +76,9 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env) 
                 parts: [
                     ...parts,
                     {
-                        text: (customPrompt || 'Extract all relevant information from this question paper. Format the output as a JSON array of objects. For very long papers, you may use a Pipe-Separated list (PSV) with headers to stay within limits. Columns: S.No, Question, Paper, Subject, Month Year, Type, Section, University Name, CBME, Supplementary.') +
-                            '\n\nIMPORTANT: There are multiple question papers in this document. Extract EVERY SINGLE ONE. Do not skip any. Provide the complete output.\nCRITICAL RULE: DO NOT invent, hallucinate, or generate any questions, subjects, or data that are not strictly and explicitly present in the provided PDF document. Only extract what you actually see.'
+                        text: "You are a highly strict data extraction assistant. Your ONLY job is to extract text exactly as it appears in the provided document.\n\n" +
+                            (customPrompt || 'Extract all relevant information from this question paper. Format the output as a JSON array of objects. For very long papers, you may use a Pipe-Separated list (PSV) with headers to stay within limits. Columns: S.No, Question, Paper, Subject, Month Year, Type, Section, University Name, CBME, Supplementary.') +
+                            '\n\nCRITICAL INSTRUCTIONS:\n1. ONLY extract information that is explicitly written in the provided document.\n2. Do NOT invent, hallucinate, guess, or add any extra questions, subjects, or data.\n3. Stop generating immediately once you reach the end of the document text. Do NOT append your own examples.'
                     }
                 ],
             },
