@@ -66,6 +66,7 @@ app.post('/api/extract', async (c) => {
         const body = await c.req.parseBody();
         const pdfFile = body.file; // Matches frontend
         const customPrompt = body.prompt;
+        const temperature = body.temperature !== undefined ? parseFloat(body.temperature) : 0.0;
 
         if (!pdfFile || !(pdfFile instanceof File)) {
             return c.json({ error: 'No file uploaded' }, 400);
@@ -74,7 +75,7 @@ app.post('/api/extract', async (c) => {
         const arrayBuffer = await pdfFile.arrayBuffer();
         const pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
 
-        const { data, usage } = await extractFromPdf(pdfBase64, customPrompt, c.env);
+        const { data, usage } = await extractFromPdf(pdfBase64, customPrompt, temperature, c.env);
 
         // Log usage for analytics
         await logUsage(c.env, c, 'extraction', {

@@ -48,7 +48,7 @@ async function getAccessToken(env) {
     return data.access_token;
 }
 
-export async function extractFromPdf(pdfBase64, customPrompt, env) {
+export async function extractFromPdf(pdfBase64, customPrompt, temperature, env) {
     const project = env.GOOGLE_CLOUD_PROJECT || 'pdf-extractor-pro-483018';
     const location = env.GOOGLE_CLOUD_LOCATION || 'asia-south1';
 
@@ -83,7 +83,7 @@ export async function extractFromPdf(pdfBase64, customPrompt, env) {
             },
         ],
         generationConfig: {
-            temperature: 0.0,
+            temperature: typeof temperature === 'number' && !isNaN(temperature) ? temperature : 0.0,
             maxOutputTokens: 65535,
         },
     };
