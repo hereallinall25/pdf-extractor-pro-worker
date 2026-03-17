@@ -143,26 +143,32 @@ app.post('/api/merge-excel', async (c) => {
         const parsedData = await processExcelMerge(arrayBuffer);
         
         // 2. Prepare for Merging AI Call (we'll process in chunks or all at once)
-        const systemPrompt = `You are a clinical AI editor. Below is a JSON array of grouped medical questions.
-Questions are grouped by their root number (e.g., 8a, 8b are in one group).
-Your task is to analyze the 'q_text' of each item within a group.
-- If the sub-questions in a group share the SAME clinical scenario or overarching disease concept (e.g., both ask about Osteoporosis mechanics), MERGE their text into a single coherent paragraph. The 'merged_num' should combine them (e.g. "8a, 8b" or "8a & b").
-- If the sub-questions ask about completely DIFFERENT and unrelated clinical topics/diseases, DO NOT merge them. Keep them as separate items.
-Return ONLY valid JSON: an array containing for each item EXACTLY these keys: {"original_num": "...", "original_text": "...", "merged_num": "...", "merged_text": "..."}`;
+        const systemPrompt = `You are a clinical AI medical editor. 
+You will receive a JSON array of question objects. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
+Objects with the exact SAME 'group_id' belong to the same parent question.
+Analyze the 'q_text' of all items that share the same 'group_id'.
+- If they share the SAME clinical scenario or disease concept, MERGE their text into a single paragraph. The 'merged_num' should combine their 'q_num' values (e.g. "1a, 1b" or "1a & b").
+- If they ask about completely DIFFERENT and unrelated clinical topics, DO NOT merge them. Keep their 'merged_num' and 'merged_text' same as the original.
+You MUST output EVERY single 'id' that was provided to you in the batch. Do not drop any items.
+Return ONLY a valid JSON array containing EXACTLY these keys for each item: {"id": <the integer id>, "merged_num": "<string>", "merged_text": "<string>"}`;
 
+        let globalIndex = 0;
         const flattenGroups = [];
         parsedData.orderedRoots.forEach(r => {
             parsedData.groups[r].forEach(item => {
+                globalIndex++;
                 flattenGroups.push({
+                   id: globalIndex,
+                   group_id: r,
                    q_num: item.q_num,
-                   q_text: item.q_text,
-                   group_id: r
+                   q_text: item.q_text
                 });
+                item._id = globalIndex; // Attach unique ID to the original parsed item
             });
         });
         
-        // Batch Processing (max 200 items per prompt to avoid token limits)
-        const batchSize = 100;
+        // Batch Processing (max 50 items per prompt to ensure no dropped keys)
+        const batchSize = 50;
         let allMergedResults = [];
         let totalInputTokens = 0;
         let totalOutputTokens = 0;
@@ -183,20 +189,19 @@ Return ONLY valid JSON: an array containing for each item EXACTLY these keys: {"
                 console.error("Failed to parse batch:", e);
                 // Fallback: put originals in if parse fails
                 batch.forEach(b => {
-                    allMergedResults.push({ original_num: b.q_num, original_text: b.q_text, merged_num: b.q_num, merged_text: b.q_text });
+                    allMergedResults.push({ id: b.id, merged_num: b.q_num, merged_text: b.q_text });
                 });
              }
              
-             totalInputTokens += aiRes.usage.promptTokenCount || 0;
-             totalOutputTokens += aiRes.usage.candidatesTokenCount || 0;
+             totalInputTokens += aiRes.usage?.promptTokenCount || 0;
+             totalOutputTokens += aiRes.usage?.candidatesTokenCount || 0;
         }
 
         // 3. Map back to Excel Rows
-        // We will create a map from original_num -> merged data
+        // We map exactly by the unique integer ID we generated
         const mergeMap = {};
         allMergedResults.forEach(r => {
-            // using string keys
-            mergeMap[String(r.original_num).trim()] = {
+            mergeMap[r.id] = {
                 merged_num: r.merged_num,
                 merged_text: r.merged_text
             };
@@ -212,8 +217,7 @@ Return ONLY valid JSON: an array containing for each item EXACTLY these keys: {"
         // Add Rows
         parsedData.orderedRoots.forEach(r => {
             parsedData.groups[r].forEach(item => {
-                const originalQNum = String(item.q_num).trim();
-                const aiData = mergeMap[originalQNum] || { merged_num: item.q_num, merged_text: item.q_text };
+                const aiData = mergeMap[item._id] || { merged_num: item.q_num, merged_text: item.q_text };
                 
                 const newRow = [...item.full_data, aiData.merged_num, aiData.merged_text];
                 worksheetData.push(newRow);
