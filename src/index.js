@@ -7,7 +7,11 @@ import crypto from 'node:crypto';
 
 const app = new Hono();
 
-app.use('*', cors());
+app.use('*', cors({
+    origin: '*',
+    allowHeaders: ['Content-Type', 'Authorization', 'Cf-Access-Authenticated-User-Email', 'X-User-Email'],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+}));
 // Global Error Handler to ensure CORS headers are always present
 app.onError((err, c) => {
     console.error('Unhandled Error:', err);
@@ -27,7 +31,7 @@ app.onError((err, c) => {
 // Helper to get user email and log usage
 async function logUsage(env, c, eventType, tokens, fileCount = 0) {
     try {
-        const userEmail = c.req.header('Cf-Access-Authenticated-User-Email') || 'anonymous@internal.com';
+        const userEmail = c.req.header('X-User-Email') || c.req.header('Cf-Access-Authenticated-User-Email') || 'anonymous@internal.com';
         await env.DB.prepare(
             'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count) VALUES (?, ?, ?, ?, ?, ?)'
         )
@@ -414,6 +418,15 @@ app.delete('/api/chat-prompts/:id', async (c) => {
 // Admin Analytics Endpoint
 app.get('/api/admin/analytics', async (c) => {
     try {
+        const reqUserEmail = c.req.query('userEmail');
+        const userFilterClause = reqUserEmail ? "AND user_email = ?" : "";
+        const userParams = reqUserEmail ? [reqUserEmail] : [];
+
+        // Get All Unique Users for Dropdown
+        const allUsers = await c.env.DB.prepare(`
+            SELECT DISTINCT user_email FROM usage_logs ORDER BY user_email ASC
+        `).all();
+
         // Get Daily Totals (IST Timezone)
         const dailyTotals = await c.env.DB.prepare(`
             SELECT 
@@ -424,10 +437,11 @@ app.get('/api/admin/analytics', async (c) => {
                 COUNT(CASE WHEN event_type = 'excel_merger' THEN 1 END) as merges,
                 COUNT(DISTINCT user_email) as active_users
             FROM usage_logs
+            WHERE 1=1 ${userFilterClause}
             GROUP BY DATE(created_at, '+5 hours', '+30 minutes')
             ORDER BY DATE(created_at, '+5 hours', '+30 minutes') DESC
             LIMIT 30
-        `).all();
+        `).bind(...userParams).all();
 
         // Get User Breakdown (Today in IST)
         const userBreakdown = await c.env.DB.prepare(`
@@ -438,9 +452,10 @@ app.get('/api/admin/analytics', async (c) => {
                 MAX(DATETIME(created_at, '+5 hours', '+30 minutes')) as last_active
             FROM usage_logs
             WHERE DATE(created_at, '+5 hours', '+30 minutes') = DATE('now', '+5 hours', '+30 minutes')
+            ${userFilterClause}
             GROUP BY user_email
             ORDER BY total_tokens DESC
-        `).all();
+        `).bind(...userParams).all();
 
         // Get Recent Activity (Convert to IST)
         const recentActivity = await c.env.DB.prepare(`
@@ -451,11 +466,13 @@ app.get('/api/admin/analytics', async (c) => {
                 token_total, 
                 DATETIME(created_at, '+5 hours', '+30 minutes') as created_at 
             FROM usage_logs 
+            WHERE 1=1 ${userFilterClause}
             ORDER BY id DESC 
             LIMIT 20
-        `).all();
+        `).bind(...userParams).all();
 
         return c.json({
+            allUsers: allUsers.results ? allUsers.results.map(r => r.user_email) : [],
             dailyTotals: dailyTotals.results || [],
             userBreakdown: userBreakdown.results || [],
             recentActivity: recentActivity.results || []

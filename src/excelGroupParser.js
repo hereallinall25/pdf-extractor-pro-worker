@@ -56,22 +56,49 @@ export async function processExcelMerge(buffer) {
         }
     }
 
-    // Group by root number
+    // Group by contiguous Blocks (resetting when root number goes backwards or stays same across papers)
     const groups = {};
     const orderedRoots = [];
     
+    let currentBlockId = 1;
+    let lastRootNum = 0;
+
     rows.forEach(r => {
-        if (!groups[r.root_num]) {
-            groups[r.root_num] = [];
-            orderedRoots.push(r.root_num);
+        // Convert to integer for accurate numerical comparison (e.g., 10 > 9, not string '10' < '9')
+        const currentRootNum = parseInt(r.root_num, 10);
+        
+        // If the current root number drops (e.g., 10 -> 1) or stays exactly the same but isn't a subquestion
+        // it means we've hit a new question paper block.
+        if (!isNaN(currentRootNum) && currentRootNum <= lastRootNum) {
+            // Only increment block if it genuinely dropped backwards, 
+            // OR if it's the exact same root number but we are forcing a split.
+            // Note: Since subquestions (1a, 1b) share the same root_num, currentRootNum == lastRootNum 
+            // is expected WITHIN a block. So we only break if it STRICTLY drops (current < last).
+            if (currentRootNum < lastRootNum) {
+                currentBlockId++;
+            }
         }
-        groups[r.root_num].push(r);
+        
+        // Update lastRootNum tracking regardless
+        if (!isNaN(currentRootNum)) {
+            lastRootNum = currentRootNum;
+        }
+
+        // Unique Group ID = Block # + Root Number
+        const currentGroupId = `block_${currentBlockId}_root_${r.root_num}`;
+        
+        if (!groups[currentGroupId]) {
+            orderedRoots.push(currentGroupId);
+            groups[currentGroupId] = [];
+        }
+        
+        groups[currentGroupId].push(r);
     });
 
     return {
         headers: rows.headers,
         groups,
-        orderedRoots,
+        orderedRoots, // Keep the same variable name for compatibility in index.js
         totalParsed: rows.length
     };
 }
