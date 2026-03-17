@@ -1,0 +1,8 @@
+🪵  Writing logs to "/Users/mdk/Library/Preferences/.wrangler/logs/wrangler-2026-03-17_02-39-24_317.log"
+Metrics dispatcher: Posting data {"deviceId":"4c65d0e3-cb54-4161-8935-e7c5a7f26761","event":"wrangler command started","timestamp":1773715164350,"properties":{"amplitude_session_id":1773715164348,"amplitude_event_id":0,"wranglerVersion":"3.114.16","osPlatform":"Mac OS","osVersion":"Darwin Kernel Version 24.6.0: Wed Nov  5 21:34:00 PST 2025; root:xnu-11417.140.69.705.2~1/RELEASE_ARM64_T8132","nodeVersion":24,"packageManager":"npm","isFirstUsage":false,"configFileType":"toml","isCI":false,"isPagesCI":false,"isWorkersCI":false,"isInteractive":false,"hasAssets":false,"argsUsed":[],"argsCombination":"","command":"wrangler dev","args":{}}}
+.env file not found at ".env". Continuing... For more details, refer to https://developers.cloudflare.com/workers/wrangler/system-environment-variables/
+
+ ⛅️ wrangler 3.114.16 (update available 4.74.0)
+-----------------------------------------------
+
+

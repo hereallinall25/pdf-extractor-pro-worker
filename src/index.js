@@ -1,0 +1,469 @@
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { extractFromPdf, chatWithGemini } from './vertexAi.js';
+import { generateExcel } from './excelService.js';
+import { Buffer } from 'node:buffer';
+import crypto from 'node:crypto';
+
+const app = new Hono();
+
+app.use('*', cors());
+// Global Error Handler to ensure CORS headers are always present
+app.onError((err, c) => {
+    console.error('Unhandled Error:', err);
+    // Explicitly add CORS headers for browsers
+    const headers = new Headers();
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cf-Access-Authenticated-User-Email');
+
+    return c.json({
+        error: 'Internal Server Error',
+        message: err.message,
+        stack: err.stack,
+    }, 500, Object.fromEntries(headers));
+});
+
+// Helper to get user email and log usage
+async function logUsage(env, c, eventType, tokens, fileCount = 0) {
+    try {
+        const userEmail = c.req.header('Cf-Access-Authenticated-User-Email') || 'anonymous@internal.com';
+        await env.DB.prepare(
+            'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+            .bind(userEmail, eventType, tokens.input || 0, tokens.output || 0, tokens.total || 0, fileCount)
+            .run();
+    } catch (error) {
+        console.error('Logging error:', error);
+    }
+}
+
+app.get('/', (c) => {
+    return c.json({ status: 'API is running', version: '2.0.1 (Cloudflare Native)' });
+});
+
+// Test Endpoint for Vertex AI
+app.get('/api/test-vertex', async (c) => {
+    try {
+        const text = 'Say hello in 5 words.';
+        const result = await extractFromPdf(null, text, c.env);
+        return c.json({ success: true, result });
+    } catch (error) {
+        return c.json({
+            success: false,
+            error: error.message,
+            stack: error.stack,
+            env_check: {
+                has_project: !!c.env.GOOGLE_CLOUD_PROJECT,
+                has_location: !!c.env.GOOGLE_CLOUD_LOCATION,
+                has_creds: !!c.env.GOOGLE_APPLICATION_CREDENTIALS
+            }
+        }, 500);
+    }
+});
+
+// Extract PDF Data
+app.post('/api/extract', async (c) => {
+    try {
+        const body = await c.req.parseBody();
+        const pdfFile = body.file; // Matches frontend
+        const customPrompt = body.prompt;
+        const temperature = body.temperature !== undefined ? parseFloat(body.temperature) : 0.0;
+
+        if (!pdfFile || !(pdfFile instanceof File)) {
+            return c.json({ error: 'No file uploaded' }, 400);
+        }
+
+        const arrayBuffer = await pdfFile.arrayBuffer();
+        const pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
+
+        const { data, usage } = await extractFromPdf(pdfBase64, customPrompt, temperature, c.env);
+
+        // Log usage for analytics
+        await logUsage(c.env, c, 'extraction', {
+            input: usage.promptTokenCount,
+            output: usage.candidatesTokenCount,
+            total: usage.totalTokenCount
+        }, 1);
+
+        return c.json({ data, usage });
+    } catch (error) {
+        console.error('Extraction error:', error);
+        return c.json({
+            error: 'Server Error during extraction',
+            details: error.message,
+            stack: error.stack // Helpful for debugging in the browser console
+        }, 500);
+    }
+});
+
+// Download Excel
+app.post('/api/download-excel', async (c) => {
+    try {
+        const { data } = await c.req.json();
+        if (!data || !Array.isArray(data)) {
+            return c.json({ error: 'Invalid data' }, 400);
+        }
+
+        const workbook = await generateExcel(data);
+        const buffer = await workbook.xlsx.writeBuffer();
+
+        return new Response(buffer, {
+            headers: {
+                'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition': 'attachment; filename=extracted_data.xlsx',
+            },
+        });
+    } catch (error) {
+        console.error('Excel error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// AI Excel Merger
+import { processExcelMerge } from './excelGroupParser.js';
+import * as XLSX from 'xlsx';
+
+app.post('/api/merge-excel', async (c) => {
+    try {
+        const body = await c.req.parseBody();
+        const excelFile = body.file;
+        
+        if (!excelFile || !(excelFile instanceof File)) {
+            return c.json({ error: 'No Excel file uploaded' }, 400);
+        }
+
+        const arrayBuffer = await excelFile.arrayBuffer();
+        
+        // 1. Group the questions
+        const parsedData = await processExcelMerge(arrayBuffer);
+        
+        // 2. Prepare for Merging AI Call (we'll process in chunks or all at once)
+        const systemPrompt = `You are a clinical AI editor. Below is a JSON array of grouped medical questions.
+Questions are grouped by their root number (e.g., 8a, 8b are in one group).
+Your task is to analyze the 'q_text' of each item within a group.
+- If the sub-questions in a group share the SAME clinical scenario or overarching disease concept (e.g., both ask about Osteoporosis mechanics), MERGE their text into a single coherent paragraph. The 'merged_num' should combine them (e.g. "8a, 8b" or "8a & b").
+- If the sub-questions ask about completely DIFFERENT and unrelated clinical topics/diseases, DO NOT merge them. Keep them as separate items.
+Return ONLY valid JSON: an array containing for each item EXACTLY these keys: {"original_num": "...", "original_text": "...", "merged_num": "...", "merged_text": "..."}`;
+
+        const flattenGroups = [];
+        parsedData.orderedRoots.forEach(r => {
+            parsedData.groups[r].forEach(item => {
+                flattenGroups.push({
+                   q_num: item.q_num,
+                   q_text: item.q_text,
+                   group_id: r
+                });
+            });
+        });
+        
+        // Batch Processing (max 200 items per prompt to avoid token limits)
+        const batchSize = 100;
+        let allMergedResults = [];
+        let totalInputTokens = 0;
+        let totalOutputTokens = 0;
+        
+        for (let i = 0; i < flattenGroups.length; i += batchSize) {
+             const batch = flattenGroups.slice(i, i + batchSize);
+             const messages = [
+                 { role: 'user', content: JSON.stringify(batch) }
+             ];
+             
+             const aiRes = await chatWithGemini(messages, [], systemPrompt, c.env);
+             
+             try {
+                let mergedResult = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
+                if (!Array.isArray(mergedResult)) { mergedResult = [mergedResult]; }
+                allMergedResults.push(...mergedResult);
+             } catch (e) {
+                console.error("Failed to parse batch:", e);
+                // Fallback: put originals in if parse fails
+                batch.forEach(b => {
+                    allMergedResults.push({ original_num: b.q_num, original_text: b.q_text, merged_num: b.q_num, merged_text: b.q_text });
+                });
+             }
+             
+             totalInputTokens += aiRes.usage.promptTokenCount || 0;
+             totalOutputTokens += aiRes.usage.candidatesTokenCount || 0;
+        }
+
+        // 3. Map back to Excel Rows
+        // We will create a map from original_num -> merged data
+        const mergeMap = {};
+        allMergedResults.forEach(r => {
+            // using string keys
+            mergeMap[String(r.original_num).trim()] = {
+                merged_num: r.merged_num,
+                merged_text: r.merged_text
+            };
+        });
+
+        // 4. Generate New Excel Workbook
+        const worksheetData = [];
+        
+        // Add Headers: Original + 2 New Columns
+        const newHeaders = [...parsedData.headers, 'Merged Question Number (AI)', 'Merged Question (AI)'];
+        worksheetData.push(newHeaders);
+
+        // Add Rows
+        parsedData.orderedRoots.forEach(r => {
+            parsedData.groups[r].forEach(item => {
+                const originalQNum = String(item.q_num).trim();
+                const aiData = mergeMap[originalQNum] || { merged_num: item.q_num, merged_text: item.q_text };
+                
+                const newRow = [...item.full_data, aiData.merged_num, aiData.merged_text];
+                worksheetData.push(newRow);
+            });
+        });
+
+        const workbook = XLSX.utils.book_new();
+        const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'AI Merged Questions');
+
+        // 5. Store File Temp in D1
+        const outBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+        const b64Excel = Buffer.from(outBuffer).toString('base64');
+        const fileId = crypto.randomUUID();
+        
+        await c.env.DB.prepare(
+            'INSERT INTO generated_files (id, data_base64) VALUES (?, ?)'
+        ).bind(fileId, b64Excel).run();
+
+        // Log Usage
+        await logUsage(c.env, c, 'excel_merger', {
+             input: totalInputTokens,
+             output: totalOutputTokens,
+             total: totalInputTokens + totalOutputTokens
+        }, 1);
+
+        return c.json({
+            status: "success",
+            preview: allMergedResults.slice(0, 10),
+            stats: {
+                total_rows: parsedData.totalParsed,
+                merged_rows: new Set(allMergedResults.map(m => m.merged_num)).size
+            },
+            usage: {
+                input_tokens: totalInputTokens,
+                output_tokens: totalOutputTokens,
+                total_tokens: totalInputTokens + totalOutputTokens
+            },
+            download_id: fileId 
+        });
+
+    } catch (error) {
+        console.error('Merge Excel Error:', error);
+        return c.json({ error: 'Server Error during merge', details: error.message }, 500);
+    }
+});
+
+// Download Merged Endpoint
+app.get('/api/download-merged-excel/:id', async (c) => {
+    try {
+        const id = c.req.param('id');
+        const doc = await c.env.DB.prepare('SELECT data_base64 FROM generated_files WHERE id = ?').bind(id).first();
+        
+        if (!doc) return c.text('File not found or expired', 404);
+        
+        const buffer = Buffer.from(doc.data_base64, 'base64');
+        return new Response(buffer, {
+            headers: {
+                'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition': 'attachment; filename=AI_Merged_Questions.xlsx',
+            },
+        });
+    } catch (error) {
+         return c.text('Error downloading file', 500);
+    }
+});
+
+// Prompt Library (D1)
+app.get('/api/prompts', async (c) => {
+    try {
+        const { results } = await c.env.DB.prepare('SELECT * FROM prompts ORDER BY created_at DESC').all();
+        return c.json(results || []);
+    } catch (error) {
+        console.error('Fetch prompts error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+app.post('/api/prompts', async (c) => {
+    try {
+        const { name, university, state, type, content } = await c.req.json();
+        const result = await c.env.DB.prepare(
+            'INSERT INTO prompts (name, university, state, type, content) VALUES (?, ?, ?, ?, ?) RETURNING *'
+        )
+            .bind(name, university, state, type, content)
+            .first();
+        return c.json(result);
+    } catch (error) {
+        console.error('Create prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+app.put('/api/prompts/:id', async (c) => {
+    try {
+        const id = c.req.param('id');
+        const { name, university, state, type, content } = await c.req.json();
+        const result = await c.env.DB.prepare(
+            'UPDATE prompts SET name = ?, university = ?, state = ?, type = ?, content = ? WHERE id = ? RETURNING *'
+        )
+            .bind(name, university, state, type, content, id)
+            .first();
+        return c.json(result);
+    } catch (error) {
+        console.error('Update prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+app.delete('/api/prompts/:id', async (c) => {
+    try {
+        const id = c.req.param('id');
+        await c.env.DB.prepare('DELETE FROM prompts WHERE id = ?').bind(id).run();
+        return c.json({ success: true });
+    } catch (error) {
+        console.error('Delete prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// AI Chat Assistant
+app.post('/api/chat', async (c) => {
+    try {
+        const { messages, attachments, promptContext } = await c.req.json();
+
+        if (!messages || !Array.isArray(messages) || messages.length === 0) {
+            return c.json({ error: 'Messages array is required' }, 400);
+        }
+
+        // Validate attachments (optional)
+        const validAttachments = (attachments || []).filter(att => att.mimeType && att.base64);
+
+        const result = await chatWithGemini(messages, validAttachments, promptContext || '', c.env);
+
+        // Log usage for analytics
+        await logUsage(c.env, c, 'chat', {
+            input: result.usage.input_tokens,
+            output: result.usage.output_tokens,
+            total: result.usage.total_tokens
+        });
+
+        return c.json(result);
+    } catch (error) {
+        console.error('Chat error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// Chat Prompts Library (D1)
+app.get('/api/chat-prompts', async (c) => {
+    try {
+        const { results } = await c.env.DB.prepare('SELECT * FROM chat_prompts ORDER BY created_at DESC').all();
+        return c.json(results || []);
+    } catch (error) {
+        console.error('Fetch chat prompts error:', error);
+        return c.json({ error: error.message, stack: error.stack }, 500);
+    }
+});
+
+app.post('/api/chat-prompts', async (c) => {
+    try {
+        const { name, type, content } = await c.req.json();
+        const result = await c.env.DB.prepare(
+            'INSERT INTO chat_prompts (name, type, content) VALUES (?, ?, ?) RETURNING *'
+        )
+            .bind(name, type, content)
+            .first();
+        return c.json(result);
+    } catch (error) {
+        console.error('Create chat prompt error:', error);
+        return c.json({ error: error.message, stack: error.stack }, 500);
+    }
+});
+
+app.put('/api/chat-prompts/:id', async (c) => {
+    try {
+        const id = c.req.param('id');
+        const { name, type, content } = await c.req.json();
+        const result = await c.env.DB.prepare(
+            'UPDATE chat_prompts SET name = ?, type = ?, content = ? WHERE id = ? RETURNING *'
+        )
+            .bind(name, type, content, id)
+            .first();
+        return c.json(result);
+    } catch (error) {
+        console.error('Update chat prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+app.delete('/api/chat-prompts/:id', async (c) => {
+    try {
+        const id = c.req.param('id');
+        await c.env.DB.prepare('DELETE FROM chat_prompts WHERE id = ?').bind(id).run();
+        return c.json({ success: true });
+    } catch (error) {
+        console.error('Delete chat prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// Admin Analytics Endpoint
+app.get('/api/admin/analytics', async (c) => {
+    try {
+        // Get Daily Totals (IST Timezone)
+        const dailyTotals = await c.env.DB.prepare(`
+            SELECT 
+                DATE(created_at, '+5 hours', '+30 minutes') as date,
+                SUM(token_total) as total_tokens,
+                COUNT(CASE WHEN event_type = 'extraction' THEN 1 END) as extractions,
+                COUNT(CASE WHEN event_type = 'chat' THEN 1 END) as chats,
+                COUNT(CASE WHEN event_type = 'excel_merger' THEN 1 END) as merges,
+                COUNT(DISTINCT user_email) as active_users
+            FROM usage_logs
+            GROUP BY DATE(created_at, '+5 hours', '+30 minutes')
+            ORDER BY DATE(created_at, '+5 hours', '+30 minutes') DESC
+            LIMIT 30
+        `).all();
+
+        // Get User Breakdown (Today in IST)
+        const userBreakdown = await c.env.DB.prepare(`
+            SELECT 
+                user_email,
+                SUM(token_total) as total_tokens,
+                COUNT(*) as events,
+                MAX(DATETIME(created_at, '+5 hours', '+30 minutes')) as last_active
+            FROM usage_logs
+            WHERE DATE(created_at, '+5 hours', '+30 minutes') = DATE('now', '+5 hours', '+30 minutes')
+            GROUP BY user_email
+            ORDER BY total_tokens DESC
+        `).all();
+
+        // Get Recent Activity (Convert to IST)
+        const recentActivity = await c.env.DB.prepare(`
+            SELECT 
+                id, 
+                user_email, 
+                event_type, 
+                token_total, 
+                DATETIME(created_at, '+5 hours', '+30 minutes') as created_at 
+            FROM usage_logs 
+            ORDER BY id DESC 
+            LIMIT 20
+        `).all();
+
+        return c.json({
+            dailyTotals: dailyTotals.results || [],
+            userBreakdown: userBreakdown.results || [],
+            recentActivity: recentActivity.results || []
+        });
+    } catch (error) {
+        console.error('Analytics error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+export default app;
