@@ -185,22 +185,21 @@ Return ONLY a valid JSON array containing EXACTLY these keys for each item: {"id
                  { role: 'user', content: JSON.stringify(batch) }
              ];
              
-             const aiRes = await chatWithGemini(messages, [], systemPrompt, c.env);
-             
              try {
+                const aiRes = await chatWithGemini(messages, [], systemPrompt, c.env);
                 let mergedResult = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
                 if (!Array.isArray(mergedResult)) { mergedResult = [mergedResult]; }
                 allMergedResults.push(...mergedResult);
+                
+                totalInputTokens += aiRes.usage?.promptTokenCount || 0;
+                totalOutputTokens += aiRes.usage?.candidatesTokenCount || 0;
              } catch (e) {
-                console.error("Failed to parse batch:", e);
-                // Fallback: put originals in if parse fails
+                console.error("Failed to parse batch or API Error:", e);
+                // Fallback: put originals in if parse or API fails
                 batch.forEach(b => {
                     allMergedResults.push({ id: b.id, merged_num: b.q_num, merged_text: b.q_text });
                 });
              }
-             
-             totalInputTokens += aiRes.usage?.promptTokenCount || 0;
-             totalOutputTokens += aiRes.usage?.candidatesTokenCount || 0;
         }
 
         // 3. Map back to Excel Rows
