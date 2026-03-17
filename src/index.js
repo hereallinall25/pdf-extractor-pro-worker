@@ -151,18 +151,18 @@ app.post('/api/merge-excel', async (c) => {
                 // 1. Group the questions
                 const parsedData = await processExcelMerge(arrayBuffer);
                 
-                // 2. Prepare for Merging AI Call (we'll process in chunks or all at once)
+                // 2. Prepare for Restore AI Call
                 const systemPrompt = `You are a strict clinical AI medical editor. 
 You will receive a JSON array of sub-questions. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
-Objects with the strict SAME 'group_id' belong to the same parent question.
+Objects with the strict SAME 'group_id' belong to the same parent question and appear in sequential order.
 CRITICAL INSTRUCTIONS:
-1. Analyze the 'q_text' of all items sharing the same 'group_id'.
-2. If they share the SAME clinical scenario or disease concept: You MUST logically REWRITE and combine them into a single, cohesive, grammatically flowing sentence using conjunctions (e.g. "and"). Do NOT simply stitch or concatenate sentences side-by-side with a period.
-   Example: Turn "Classify Osteoporosis." and "Clinical presentation of senile osteoporosis." into "Classify Osteoporosis and explain the clinical presentation and management of senile osteoporosis."
-   The 'merged_num' should combine their 'q_num' values (e.g. "1a, 1b" or "1a & b").
-3. HARD EXCLUSION RULE: If the sub-questions ask about completely DIFFERENT, unrelated clinical topics (e.g. Neurogenic claudication vs Paraplegia), YOU MUST NOT MERGE THEM. Keep them completely separate and return their original text.
-4. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
-Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "merged_num": "<val>", "merged_text": "<val>"}`;
+1. Evaluate each 'q_text' individually.
+2. An 'Incomplete' question is one that cannot stand alone. It relies on the previous question for context. Common signs: vague pronouns ("it", "they"), dangling modifiers, or lacking a specific clinical subject (e.g. "Management of it.", "How will you treat it?", "Sub-classification.").
+3. If a question is 'Complete' (stands alone perfectly): Return its exact original text and mark status as 'Complete'.
+4. If a question is 'Incomplete': Read the PRECEDING questions in this batch that share the same 'group_id' to infer the missing noun/subject. Rewrite the incomplete question by replacing the vague pronoun with the clinical noun from the preceding question. Mark status as 'Incomplete'.
+   Example: If 1a="Define Osteoporosis." and 1b="How will you treat it?", rewrite 1b as "How will you treat osteoporosis?" and mark it 'Incomplete'.
+5. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
+Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
 
         let globalIndex = 0;
         const flattenGroups = [];
@@ -210,7 +210,7 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "mer
                 console.error("Failed to parse batch or API Error:", e);
                 // Fallback: put originals in if parse or API fails
                 batch.forEach(b => {
-                    allMergedResults.push({ id: b.id, merged_num: b.q_num, merged_text: b.q_text });
+                    allMergedResults.push({ id: b.id, status: 'Error', restored_text: b.q_text });
                 });
              }
         }
@@ -220,8 +220,8 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "mer
         const mergeMap = {};
         allMergedResults.forEach(r => {
             mergeMap[r.id] = {
-                merged_num: r.merged_num,
-                merged_text: r.merged_text
+                status: r.status,
+                restored_text: r.restored_text
             };
         });
 
@@ -229,22 +229,22 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "mer
         const worksheetData = [];
         
         // Add Headers: Original + 2 New Columns
-        const newHeaders = [...parsedData.headers, 'Merged Question Number (AI)', 'Merged Question (AI)'];
+        const newHeaders = [...parsedData.headers, 'Completion Status (AI)', 'Restored Question (AI)'];
         worksheetData.push(newHeaders);
 
         // Add Rows
         parsedData.orderedRoots.forEach(r => {
             parsedData.groups[r].forEach(item => {
-                const aiData = mergeMap[item._id] || { merged_num: item.q_num, merged_text: item.q_text };
+                const aiData = mergeMap[item._id] || { status: 'Complete', restored_text: item.q_text };
                 
-                const newRow = [...item.full_data, aiData.merged_num, aiData.merged_text];
+                const newRow = [...item.full_data, aiData.status, aiData.restored_text];
                 worksheetData.push(newRow);
             });
         });
 
         const workbook = XLSX.utils.book_new();
         const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'AI Merged Questions');
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'AI Restored Questions');
 
         // 5. Store File Temp in D1
         const outBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
@@ -266,10 +266,10 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "mer
         const previewRows = allMergedResults.slice(0, 10).map(r => {
             const originalItem = flattenGroups.find(f => f.id === r.id);
             return {
-                original_num: originalItem ? String(originalItem.q_num).trim() : r.merged_num,
+                original_num: originalItem ? String(originalItem.q_num).trim() : 'N/A',
                 original_text: originalItem ? String(originalItem.q_text).trim() : '',
-                merged_num: r.merged_num,
-                merged_text: r.merged_text
+                status: r.status,
+                restored_text: r.restored_text
             };
         });
 
@@ -279,7 +279,7 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "mer
             download_id: fileId,
             stats: {
                 total_rows: parsedData.totalParsed,
-                merged_rows: new Set(allMergedResults.map(m => m.merged_num)).size
+                merged_rows: allMergedResults.filter(m => m.status === 'Incomplete').length
             },
             usage: {
                 input_tokens: totalInputTokens,
