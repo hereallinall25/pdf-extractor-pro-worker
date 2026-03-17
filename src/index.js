@@ -249,9 +249,20 @@ Return ONLY a valid JSON array containing EXACTLY these keys for each item: {"id
              total: totalInputTokens + totalOutputTokens
         }, 1);
 
+        // Build final preview rows retaining original text for UI rendering
+        const previewRows = allMergedResults.slice(0, 10).map(r => {
+            const originalItem = flattenGroups.find(f => f.id === r.id);
+            return {
+                original_num: originalItem ? String(originalItem.q_num).trim() : r.merged_num,
+                original_text: originalItem ? String(originalItem.q_text).trim() : '',
+                merged_num: r.merged_num,
+                merged_text: r.merged_text
+            };
+        });
+
         return c.json({
             status: "success",
-            preview: allMergedResults.slice(0, 10),
+            preview: previewRows,
             stats: {
                 total_rows: parsedData.totalParsed,
                 merged_rows: new Set(allMergedResults.map(m => m.merged_num)).size
