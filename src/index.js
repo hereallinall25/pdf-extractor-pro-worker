@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { stream } from 'hono/streaming';
 import { cors } from 'hono/cors';
 import { extractFromPdf, chatWithGemini } from './vertexAi.js';
 import { generateExcel } from './excelService.js';
@@ -139,18 +140,29 @@ app.post('/api/merge-excel', async (c) => {
 
         const arrayBuffer = await excelFile.arrayBuffer();
         
-        // 1. Group the questions
-        const parsedData = await processExcelMerge(arrayBuffer);
-        
-        // 2. Prepare for Merging AI Call (we'll process in chunks or all at once)
-        const systemPrompt = `You are a clinical AI medical editor. 
-You will receive a JSON array of question objects. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
-Objects with the exact SAME 'group_id' belong to the same parent question.
-Analyze the 'q_text' of all items that share the same 'group_id'.
-- If they share the SAME clinical scenario or disease concept, MERGE their text into a single paragraph. The 'merged_num' should combine their 'q_num' values (e.g. "1a, 1b" or "1a & b").
-- If they ask about completely DIFFERENT and unrelated clinical topics, DO NOT merge them. Keep their 'merged_num' and 'merged_text' same as the original.
-You MUST output EVERY single 'id' that was provided to you in the batch. Do not drop any items.
-Return ONLY a valid JSON array containing EXACTLY these keys for each item: {"id": <the integer id>, "merged_num": "<string>", "merged_text": "<string>"}`;
+        // Return a Server-Sent Events Stream for live updates
+        return stream(c, async (streamWriter) => {
+            const emit = async (type, data) => {
+                 await streamWriter.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+            };
+
+            try {
+                await emit('progress', { message: 'Grouping original questions...' });
+                // 1. Group the questions
+                const parsedData = await processExcelMerge(arrayBuffer);
+                
+                // 2. Prepare for Merging AI Call (we'll process in chunks or all at once)
+                const systemPrompt = `You are a strict clinical AI medical editor. 
+You will receive a JSON array of sub-questions. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
+Objects with the strict SAME 'group_id' belong to the same parent question.
+CRITICAL INSTRUCTIONS:
+1. Analyze the 'q_text' of all items sharing the same 'group_id'.
+2. If they share the SAME clinical scenario or disease concept: You MUST logically REWRITE and combine them into a single, cohesive, grammatically flowing sentence using conjunctions (e.g. "and"). Do NOT simply stitch or concatenate sentences side-by-side with a period.
+   Example: Turn "Classify Osteoporosis." and "Clinical presentation of senile osteoporosis." into "Classify Osteoporosis and explain the clinical presentation and management of senile osteoporosis."
+   The 'merged_num' should combine their 'q_num' values (e.g. "1a, 1b" or "1a & b").
+3. HARD EXCLUSION RULE: If the sub-questions ask about completely DIFFERENT, unrelated clinical topics (e.g. Neurogenic claudication vs Paraplegia), YOU MUST NOT MERGE THEM. Keep them completely separate and return their original text.
+4. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
+Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "merged_num": "<val>", "merged_text": "<val>"}`;
 
         let globalIndex = 0;
         const flattenGroups = [];
@@ -181,6 +193,7 @@ Return ONLY a valid JSON array containing EXACTLY these keys for each item: {"id
         
         for (let i = 0; i < flattenGroups.length; i += batchSize) {
              const batch = flattenGroups.slice(i, i + batchSize);
+             await emit('progress', { message: `AI Merging Group ${Math.floor(i/batchSize)+1} of ${Math.ceil(flattenGroups.length/batchSize)}...` });
              const messages = [
                  { role: 'user', content: JSON.stringify(batch) }
              ];
@@ -260,9 +273,10 @@ Return ONLY a valid JSON array containing EXACTLY these keys for each item: {"id
             };
         });
 
-        return c.json({
+        await emit('success', {
             status: "success",
             preview: previewRows,
+            download_id: fileId,
             stats: {
                 total_rows: parsedData.totalParsed,
                 merged_rows: new Set(allMergedResults.map(m => m.merged_num)).size
@@ -271,12 +285,17 @@ Return ONLY a valid JSON array containing EXACTLY these keys for each item: {"id
                 input_tokens: totalInputTokens,
                 output_tokens: totalOutputTokens,
                 total_tokens: totalInputTokens + totalOutputTokens
-            },
-            download_id: fileId 
+            }
+        });
+
+            } catch (streamErr) {
+                console.error("Streaming AI merge failed:", streamErr);
+                await emit('error', { message: streamErr.message });
+            }
         });
 
     } catch (error) {
-        console.error('Merge Excel Error:', error);
+        console.error('Merge endpoint setup error:', error);
         return c.json({ error: 'Server Error during merge', details: error.message }, 500);
     }
 });
