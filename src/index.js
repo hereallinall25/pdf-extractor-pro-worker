@@ -156,11 +156,14 @@ app.post('/api/merge-excel', async (c) => {
 You will receive a JSON array of sub-questions. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
 Objects with the strict SAME 'group_id' belong to the same parent question and appear in sequential order.
 CRITICAL INSTRUCTIONS:
-1. Evaluate each 'q_text' individually.
-2. An 'Incomplete' question is one that cannot stand alone. It relies on the previous question for context. Common signs: vague pronouns ("it", "they"), dangling modifiers, or lacking a specific clinical subject (e.g. "Management of it.", "How will you treat it?", "Sub-classification.").
-3. If a question is 'Complete' (stands alone perfectly): Return its exact original text and mark status as 'Complete'.
-4. If a question is 'Incomplete': Read the PRECEDING questions in this batch that share the same 'group_id' to infer the missing noun/subject. Rewrite the incomplete question by replacing the vague pronoun with the clinical noun from the preceding question. Mark status as 'Incomplete'.
-   Example: If 1a="Define Osteoporosis." and 1b="How will you treat it?", rewrite 1b as "How will you treat osteoporosis?" and mark it 'Incomplete'.
+1. Evaluate each 'q_text' individually to decide if it is 'Complete' or 'Incomplete'.
+2. What is COMPLETE: Any question or phrase that explicitly navmes the disease, bone, or condition it is asking about is COMPLETE. 
+   Examples of COMPLETE: "Clinical presentation and management of senile osteoporosis.", "Morning stiffness.", "Fracture healing.", "Various factors influencing fracture healing."
+   If it is COMPLETE, set status to 'Complete' and return the EXACT ORIGINAL 'q_text' as 'restored_text'. Do not change a single letter.
+3. What is INCOMPLETE: A question is only INCOMPLETE if it uses a vague pronoun ("it", "they", "this") or completely lacks the disease noun, meaning you cannot understand what it is asking about without looking at the question above it. 
+   Examples of INCOMPLETE: "How will you treat it?", "Management of it.", "Sub-classification.", "Clinical features."
+4. REWRITING INCOMPLETE QUESTIONS: If you mark it 'Incomplete', you MUST look at the preceding question with the SAME 'group_id'. Find the disease/noun in that preceding question, and rewrite the incomplete question to include it.
+   Example: If 1a="Classify osteoporosis" and 1b="Clinical features.", you must return 'restored_text' as "Clinical features of osteoporosis." and status as 'Incomplete'.
 5. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
 Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
 
