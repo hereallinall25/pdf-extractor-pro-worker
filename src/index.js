@@ -167,8 +167,8 @@ Return ONLY a valid JSON array containing EXACTLY these keys for each item: {"id
             });
         });
         
-        // Batch Processing (max 50 items per prompt to ensure no dropped keys)
-        const batchSize = 50;
+        // Batch Processing (max 10 items per prompt to ensure no dropped keys)
+        const batchSize = 10;
         let allMergedResults = [];
         let totalInputTokens = 0;
         let totalOutputTokens = 0;
