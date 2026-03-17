@@ -188,21 +188,41 @@ export async function chatWithGemini(messages, attachments, promptContext, env) 
         }
     };
 
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-    });
+    let response;
+    let data;
+    let retries = 0;
+    const maxRetries = 4;
 
-    if (!response.ok) {
+    while (retries <= maxRetries) {
+        response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        if (response.ok) {
+            data = await response.json();
+            break;
+        }
+        
         const errorData = await response.json();
-        throw new Error(`Gemini API Error: ${JSON.stringify(errorData)}`);
+
+        // Check for 429 Quota Error
+        if (response.status === 429 && retries < maxRetries) {
+            retries++;
+            // Exponential backoff: 2s, 4s, 8s, 16s + jitter
+            const delay = Math.pow(2, retries) * 1000 + (Math.random() * 1000);
+            console.log(`[Gemini] 429 Quota Hit. Retrying in ${Math.round(delay)}ms... (Attempt ${retries}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+        }
+
+        throw new Error(`Gemini API Error (Status ${response.status}): ${JSON.stringify(errorData)}`);
     }
 
-    const data = await response.json();
     if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
         throw new Error('Malformed response from Gemini: ' + JSON.stringify(data));
     }
