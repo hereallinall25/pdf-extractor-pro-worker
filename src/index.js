@@ -152,7 +152,7 @@ app.post('/api/merge-excel', async (c) => {
                 const parsedData = await processExcelMerge(arrayBuffer);
                 
                 // 2. Prepare for Restore AI Call
-                const systemPrompt = `You are a strict clinical AI medical editor. 
+                const defaultPrompt = `You are a strict clinical AI medical editor. 
 You will receive a JSON array of sub-questions. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
 Objects with the strict SAME 'group_id' belong to the same parent question and appear in sequential order.
 CRITICAL INSTRUCTIONS:
@@ -166,6 +166,8 @@ CRITICAL INSTRUCTIONS:
    Example: If 1a="Classify osteoporosis" and 1b="Clinical features.", you must return 'restored_text' as "Clinical features of osteoporosis." and status as 'Incomplete'.
 5. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
 Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
+
+                const systemPrompt = body.systemPrompt || defaultPrompt;
 
         let globalIndex = 0;
         const flattenGroups = [];
