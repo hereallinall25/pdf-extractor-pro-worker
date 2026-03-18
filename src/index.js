@@ -163,8 +163,7 @@ CRITICAL INSTRUCTIONS:
 3. What is INCOMPLETE: A question is ONLY INCOMPLETE if it uses a vague pronoun ("it", "they", "this", "that") OR completely lacks the core disease noun (e.g. "Clinical features and diagnostic criteria.", "Management of it.", "How would you investigate?").
 4. REWRITING INCOMPLETE QUESTIONS: If you mark it 'Incomplete', you MUST read the preceding question with the SAME 'group_id'. Find the missing disease/noun from the preceding question, and rewrite the incomplete question to include it.
    Example: If 1a="Classify osteoporosis" and 1b="Clinical features.", you must return 'restored_text' as "Clinical features of osteoporosis." and status as 'Incomplete'.
-5. FAILSAFE: If you mark a question 'Incomplete' but you end up returning the exact same original text without changing anything, YOU MUST CHANGE THE STATUS BACK TO 'Complete'.
-6. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
+5. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
 Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
 
                 const systemPrompt = body.systemPrompt || defaultPrompt;
@@ -219,9 +218,9 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "sta
                 });
              }
              
-             // Delay to prevent hitting Gemini API rate limits (15 RPM for free tier)
+             // Delay to prevent hitting Gemini API rate limits (15 RPM for free tier -> 1 req every 4 seconds)
              if (i + batchSize < flattenGroups.length) {
-                 await new Promise(resolve => setTimeout(resolve, 2000));
+                 await new Promise(resolve => setTimeout(resolve, 4500));
              }
         }
 
@@ -229,6 +228,16 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "sta
         // We map exactly by the unique integer ID we generated
         const mergeMap = {};
         allMergedResults.forEach(r => {
+            // Hardcoded Failsafe: If AI tagged it Incomplete but didn't actually change anything, force Complete
+            const originalItem = flattenGroups.find(f => f.id === r.id);
+            if (originalItem && r.status === 'Incomplete') {
+                const origLower = String(originalItem.q_text || '').trim().toLowerCase();
+                const newLower = String(r.restored_text || '').trim().toLowerCase();
+                if (origLower === newLower) {
+                    r.status = 'Complete';
+                }
+            }
+
             mergeMap[r.id] = {
                 status: r.status,
                 restored_text: r.restored_text
