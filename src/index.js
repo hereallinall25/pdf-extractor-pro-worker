@@ -196,30 +196,54 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "sta
         
         for (let i = 0; i < flattenGroups.length; i += batchSize) {
              const batch = flattenGroups.slice(i, i + batchSize);
-             await emit('progress', { message: `AI Merging Group ${Math.floor(i/batchSize)+1} of ${Math.ceil(flattenGroups.length/batchSize)}...` });
+             const batchNum = Math.floor(i / batchSize) + 1;
+             const totalBatches = Math.ceil(flattenGroups.length / batchSize);
+             await emit('progress', { message: `Processing batch ${batchNum} of ${totalBatches} (rows ${i + 1}–${Math.min(i + batchSize, flattenGroups.length)})...` });
+             
              const messages = [
                  { role: 'user', content: JSON.stringify(batch) }
              ];
-             
-             try {
-                const aiRes = await chatWithGemini(messages, [], systemPrompt, c.env);
-                let mergedResult = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
-                if (!Array.isArray(mergedResult)) { mergedResult = [mergedResult]; }
-                allMergedResults.push(...mergedResult);
-                
-                totalInputTokens += aiRes.usage?.promptTokenCount || 0;
-                totalOutputTokens += aiRes.usage?.candidatesTokenCount || 0;
-             } catch (e) {
-                console.error("Failed to parse batch or API Error:", e);
-                // Fallback: put originals in if parse or API fails
-                batch.forEach(b => {
-                    allMergedResults.push({ id: b.id, status: 'Error', restored_text: b.q_text });
-                });
+
+             // Retry loop: up to 3 attempts per batch
+             let attempts = 0;
+             let batchSuccess = false;
+             while (attempts < 3 && !batchSuccess) {
+                 attempts++;
+                 try {
+                     const aiRes = await chatWithGemini(messages, [], systemPrompt, c.env);
+                     let mergedResult = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
+                     if (!Array.isArray(mergedResult)) { mergedResult = [mergedResult]; }
+                     allMergedResults.push(...mergedResult);
+                     totalInputTokens += aiRes.usage?.promptTokenCount || 0;
+                     totalOutputTokens += aiRes.usage?.candidatesTokenCount || 0;
+                     batchSuccess = true;
+                 } catch (e) {
+                     const isRateLimit = e.message && (e.message.includes('429') || e.message.toLowerCase().includes('rate') || e.message.toLowerCase().includes('quota'));
+                     console.error(`Batch ${batchNum} attempt ${attempts} failed:`, e.message);
+                     
+                     if (isRateLimit && attempts < 3) {
+                         await emit('progress', { message: `Rate limit hit on batch ${batchNum}. Waiting 35 seconds before retry (attempt ${attempts}/3)...` });
+                         await new Promise(resolve => setTimeout(resolve, 35000));
+                     } else if (attempts >= 3) {
+                         // All retries exhausted - write originals as Error
+                         console.error(`Batch ${batchNum} failed after 3 attempts. Writing error rows.`);
+                         batch.forEach(b => {
+                             allMergedResults.push({ id: b.id, status: 'Error', restored_text: b.q_text });
+                         });
+                         batchSuccess = true; // Exit while loop
+                     } else {
+                         // Non-rate-limit error, no point retrying
+                         batch.forEach(b => {
+                             allMergedResults.push({ id: b.id, status: 'Error', restored_text: b.q_text });
+                         });
+                         batchSuccess = true;
+                     }
+                 }
              }
              
-             // Delay to prevent hitting Gemini API rate limits (15 RPM for free tier -> 1 req every 4 seconds)
+             // 7-second delay between batches = ~8.5 RPM, safely under Gemini's 15 RPM free tier limit
              if (i + batchSize < flattenGroups.length) {
-                 await new Promise(resolve => setTimeout(resolve, 4500));
+                 await new Promise(resolve => setTimeout(resolve, 7000));
              }
         }
 
