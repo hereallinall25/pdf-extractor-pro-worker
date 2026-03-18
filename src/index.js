@@ -110,8 +110,7 @@ app.post('/api/download-excel', async (c) => {
             return c.json({ error: 'Invalid data' }, 400);
         }
 
-        const workbook = await generateExcel(data);
-        const buffer = await workbook.xlsx.writeBuffer();
+        const buffer = await generateExcel(data);
 
         return new Response(buffer, {
             headers: {
