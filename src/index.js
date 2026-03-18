@@ -157,14 +157,14 @@ You will receive a JSON array of sub-questions. Each object has an 'id', 'group_
 Objects with the strict SAME 'group_id' belong to the same parent question and appear in sequential order.
 CRITICAL INSTRUCTIONS:
 1. Evaluate each 'q_text' individually to decide if it is 'Complete' or 'Incomplete'.
-2. What is COMPLETE: Any question or phrase that explicitly navmes the disease, bone, or condition it is asking about is COMPLETE. 
-   Examples of COMPLETE: "Clinical presentation and management of senile osteoporosis.", "Morning stiffness.", "Fracture healing.", "Various factors influencing fracture healing."
+2. What is COMPLETE: Any statement that already contains the name of the specific disease, drug, or clinical condition is COMPLETE. If you can read the sentence and immediately know the exact medical noun being discussed, it is COMPLETE. 
+   Examples of COMPLETE: "Clinical presentation of senile osteoporosis.", "Fracture healing.", "Screening of patients prior to starting biological therapy in immunobullous disorder.", "Management of Hemangioma."
    If it is COMPLETE, set status to 'Complete' and return the EXACT ORIGINAL 'q_text' as 'restored_text'. Do not change a single letter.
-3. What is INCOMPLETE: A question is only INCOMPLETE if it uses a vague pronoun ("it", "they", "this") or completely lacks the disease noun, meaning you cannot understand what it is asking about without looking at the question above it. 
-   Examples of INCOMPLETE: "How will you treat it?", "Management of it.", "Sub-classification.", "Clinical features."
-4. REWRITING INCOMPLETE QUESTIONS: If you mark it 'Incomplete', you MUST look at the preceding question with the SAME 'group_id'. Find the disease/noun in that preceding question, and rewrite the incomplete question to include it.
+3. What is INCOMPLETE: A question is ONLY INCOMPLETE if it uses a vague pronoun ("it", "they", "this", "that") OR completely lacks the core disease noun (e.g. "Clinical features and diagnostic criteria.", "Management of it.", "How would you investigate?").
+4. REWRITING INCOMPLETE QUESTIONS: If you mark it 'Incomplete', you MUST read the preceding question with the SAME 'group_id'. Find the missing disease/noun from the preceding question, and rewrite the incomplete question to include it.
    Example: If 1a="Classify osteoporosis" and 1b="Clinical features.", you must return 'restored_text' as "Clinical features of osteoporosis." and status as 'Incomplete'.
-5. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
+5. FAILSAFE: If you mark a question 'Incomplete' but you end up returning the exact same original text without changing anything, YOU MUST CHANGE THE STATUS BACK TO 'Complete'.
+6. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
 Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
 
                 const systemPrompt = body.systemPrompt || defaultPrompt;
@@ -217,6 +217,11 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "sta
                 batch.forEach(b => {
                     allMergedResults.push({ id: b.id, status: 'Error', restored_text: b.q_text });
                 });
+             }
+             
+             // Delay to prevent hitting Gemini API rate limits (15 RPM for free tier)
+             if (i + batchSize < flattenGroups.length) {
+                 await new Promise(resolve => setTimeout(resolve, 2000));
              }
         }
 
