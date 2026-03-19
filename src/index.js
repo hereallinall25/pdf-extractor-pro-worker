@@ -400,19 +400,31 @@ app.post('/api/parse-excel', async (c) => {
 });
 
 // 2. Restore a single batch of pre-parsed rows through AI → returns JSON results (fast, <30s)
-const DEFAULT_RESTORE_PROMPT = `You are a strict clinical AI medical editor. 
+const DEFAULT_RESTORE_PROMPT = `You are a strict clinical AI medical editor.
 You will receive a JSON array of sub-questions. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
-Objects with the strict SAME 'group_id' belong to the same parent question and appear in sequential order.
+Objects with the SAME 'group_id' belong to the same parent question and appear in sequential sub-part order.
+
 CRITICAL INSTRUCTIONS:
-1. Evaluate each 'q_text' individually to decide if it is 'Complete' or 'Incomplete'.
-2. What is COMPLETE: Any statement that already contains the name of the specific disease, drug, or clinical condition is COMPLETE. If you can read the sentence and immediately know the exact medical noun being discussed, it is COMPLETE. 
-   Examples of COMPLETE: "Clinical presentation of senile osteoporosis.", "Fracture healing.", "Screening of patients prior to starting biological therapy in immunobullous disorder.", "Management of Hemangioma."
-   If it is COMPLETE, set status to 'Complete' and return the EXACT ORIGINAL 'q_text' as 'restored_text'. Do not change a single letter.
-3. What is INCOMPLETE: A question is ONLY INCOMPLETE if it uses a vague pronoun ("it", "they", "this", "that") OR completely lacks the core disease noun (e.g. "Clinical features and diagnostic criteria.", "Management of it.", "How would you investigate?").
-4. REWRITING INCOMPLETE QUESTIONS: If you mark it 'Incomplete', you MUST read the preceding question with the SAME 'group_id'. Find the missing disease/noun from the preceding question, and rewrite the incomplete question to include it.
-   Example: If 1a="Classify osteoporosis" and 1b="Clinical features.", you must return 'restored_text' as "Clinical features of osteoporosis." and status as 'Incomplete'.
-5. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
-Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
+
+0. ABSOLUTE RULE — 'a' SUBPARTS ARE ALWAYS COMPLETE AND NEVER MODIFIED:
+   Any sub-question whose 'q_num' ends with the letter 'a' (e.g. "1.a", "5a", "10.a") is the PRIMARY lead question.
+   You MUST always set status to 'Complete' and return the EXACT ORIGINAL 'q_text' unchanged. Do not alter punctuation, spacing, or a single character.
+   This rule overrides ALL other rules below.
+
+1. For sub-questions 'b', 'c', 'd', etc. — evaluate each 'q_text' to decide if it is 'Complete' or 'Incomplete'.
+
+2. COMPLETE (non-'a' subparts): Any question that already contains the name of the specific disease, drug, or clinical condition. You can read it and immediately know the exact medical noun.
+   Examples: "Clinical presentation of senile osteoporosis.", "Management of Hemangioma."
+   If COMPLETE → set status 'Complete', return the EXACT ORIGINAL 'q_text' as 'restored_text'. Do NOT change a single character.
+
+3. INCOMPLETE (non-'a' subparts): ONLY if the question uses a vague pronoun ("it", "they", "this", "that") OR completely lacks the core disease noun (e.g. "Clinical features and diagnostic criteria.", "Management of it.").
+
+4. REWRITING INCOMPLETE QUESTIONS: Find the SAME question number's 'a' subpart (same 'group_id', q_num ending in 'a'). Extract the missing disease/noun from that 'a' subpart. Rewrite the incomplete question to include it.
+   Example: group_id="Q1", 1a="Classify osteoporosis", 1b="Clinical features." → restored_text for 1b = "Clinical features of osteoporosis.", status = 'Incomplete'.
+
+5. Output EVERY single 'id' provided. Do not drop any.
+Return ONLY a valid JSON array with EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
+
 
 app.post('/api/restore-batch', async (c) => {
     try {
@@ -462,13 +474,24 @@ app.post('/api/build-excel', async (c) => {
         rows.forEach(r => { rowMap[r._id] = r.full_data; });
 
         const worksheetData = [];
-        const newHeaders = [...headers, 'Completion Status (AI)', 'Restored Question (AI)'];
+        const newHeaders = [...headers, 'Completion Status (AI)', 'Restored Question (AI)', 'Modification Check'];
         worksheetData.push(newHeaders);
 
         flattenGroups.forEach(item => {
             const aiData = mergeMap[item.id] || { status: 'Complete', restored_text: item.q_text };
             const fullRow = rowMap[item.id] || [];
-            worksheetData.push([...fullRow, aiData.status, aiData.restored_text]);
+
+            // Modification Check: compare original vs AI output
+            const originalNorm = String(item.q_text || '').trim();
+            const restoredNorm = String(aiData.restored_text || '').trim();
+            let modCheck;
+            if (aiData.status === 'Complete') {
+                modCheck = originalNorm === restoredNorm ? '✅ Retained' : '⚠️ Modified (AI changed a Complete question)';
+            } else {
+                modCheck = originalNorm !== restoredNorm ? '✅ Restored' : '⚠️ Not Restored (AI marked Incomplete but kept same text)';
+            }
+
+            worksheetData.push([...fullRow, aiData.status, aiData.restored_text, modCheck]);
         });
 
         const workbook = XLSX.utils.book_new();
@@ -482,7 +505,8 @@ app.post('/api/build-excel', async (c) => {
         await c.env.DB.prepare('INSERT INTO generated_files (id, data_base64) VALUES (?, ?)').bind(fileId, b64Excel).run();
 
         const incomplete_count = allResults.filter(r => r.status === 'Incomplete').length;
-        return c.json({ download_id: fileId, incomplete_count, total: flattenGroups.length });
+        const modified_count = worksheetData.slice(1).filter(r => r[r.length - 1]?.startsWith('⚠️')).length;
+        return c.json({ download_id: fileId, incomplete_count, total: flattenGroups.length, modified_count });
     } catch (e) {
         console.error('build-excel error:', e);
         return c.json({ error: e.message }, 500);
