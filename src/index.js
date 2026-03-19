@@ -362,6 +362,135 @@ app.get('/api/download-merged-excel/:id', async (c) => {
     }
 });
 
+// ─── NEW Frontend-Chunked Architecture (3 micro-endpoints) ───────────────────
+
+// 1. Parse Excel → returns flat list of question groups as JSON (fast, <5s)
+app.post('/api/parse-excel', async (c) => {
+    try {
+        const body = await c.req.parseBody();
+        const excelFile = body.file;
+        if (!excelFile || !(excelFile instanceof File)) {
+            return c.json({ error: 'No Excel file uploaded' }, 400);
+        }
+        const arrayBuffer = await excelFile.arrayBuffer();
+        const parsedData = await processExcelMerge(arrayBuffer);
+
+        let globalIndex = 0;
+        const flattenGroups = [];
+        parsedData.orderedRoots.forEach(r => {
+            parsedData.groups[r].forEach(item => {
+                globalIndex++;
+                flattenGroups.push({ id: globalIndex, group_id: r, q_num: item.q_num, q_text: item.q_text });
+                item._id = globalIndex;
+            });
+        });
+
+        return c.json({
+            flattenGroups,
+            headers: parsedData.headers,
+            rows: parsedData.orderedRoots.flatMap(r =>
+                parsedData.groups[r].map(item => ({ _id: item._id, full_data: item.full_data }))
+            ),
+            totalParsed: parsedData.totalParsed
+        });
+    } catch (e) {
+        console.error('parse-excel error:', e);
+        return c.json({ error: e.message }, 500);
+    }
+});
+
+// 2. Restore a single batch of pre-parsed rows through AI → returns JSON results (fast, <30s)
+const DEFAULT_RESTORE_PROMPT = `You are a strict clinical AI medical editor. 
+You will receive a JSON array of sub-questions. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
+Objects with the strict SAME 'group_id' belong to the same parent question and appear in sequential order.
+CRITICAL INSTRUCTIONS:
+1. Evaluate each 'q_text' individually to decide if it is 'Complete' or 'Incomplete'.
+2. What is COMPLETE: Any statement that already contains the name of the specific disease, drug, or clinical condition is COMPLETE. If you can read the sentence and immediately know the exact medical noun being discussed, it is COMPLETE. 
+   Examples of COMPLETE: "Clinical presentation of senile osteoporosis.", "Fracture healing.", "Screening of patients prior to starting biological therapy in immunobullous disorder.", "Management of Hemangioma."
+   If it is COMPLETE, set status to 'Complete' and return the EXACT ORIGINAL 'q_text' as 'restored_text'. Do not change a single letter.
+3. What is INCOMPLETE: A question is ONLY INCOMPLETE if it uses a vague pronoun ("it", "they", "this", "that") OR completely lacks the core disease noun (e.g. "Clinical features and diagnostic criteria.", "Management of it.", "How would you investigate?").
+4. REWRITING INCOMPLETE QUESTIONS: If you mark it 'Incomplete', you MUST read the preceding question with the SAME 'group_id'. Find the missing disease/noun from the preceding question, and rewrite the incomplete question to include it.
+   Example: If 1a="Classify osteoporosis" and 1b="Clinical features.", you must return 'restored_text' as "Clinical features of osteoporosis." and status as 'Incomplete'.
+5. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
+Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
+
+app.post('/api/restore-batch', async (c) => {
+    try {
+        const { batch, systemPrompt } = await c.req.json();
+        if (!Array.isArray(batch) || batch.length === 0) {
+            return c.json({ error: 'Invalid batch' }, 400);
+        }
+        const prompt = systemPrompt || DEFAULT_RESTORE_PROMPT;
+        const messages = [{ role: 'user', content: JSON.stringify(batch) }];
+        const aiRes = await chatWithGemini(messages, [], prompt, c.env);
+        let result = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
+        if (!Array.isArray(result)) result = [result];
+
+        // Hardcoded failsafe: if AI returned same text, force Complete
+        result = result.map(r => {
+            const orig = batch.find(b => b.id === r.id);
+            if (orig && r.status === 'Incomplete') {
+                if (String(orig.q_text).trim().toLowerCase() === String(r.restored_text).trim().toLowerCase()) {
+                    r.status = 'Complete';
+                }
+            }
+            return r;
+        });
+
+        return c.json({
+            results: result,
+            usage: {
+                input: aiRes.usage?.promptTokenCount || 0,
+                output: aiRes.usage?.candidatesTokenCount || 0
+            }
+        });
+    } catch (e) {
+        console.error('restore-batch error:', e);
+        return c.json({ error: e.message }, 500);
+    }
+});
+
+// 3. Build final Excel from all accumulated results → stores in D1 and returns download_id
+app.post('/api/build-excel', async (c) => {
+    try {
+        const { allResults, flattenGroups, headers, rows } = await c.req.json();
+
+        const mergeMap = {};
+        allResults.forEach(r => { mergeMap[r.id] = { status: r.status, restored_text: r.restored_text }; });
+
+        const rowMap = {};
+        rows.forEach(r => { rowMap[r._id] = r.full_data; });
+
+        const worksheetData = [];
+        const newHeaders = [...headers, 'Completion Status (AI)', 'Restored Question (AI)'];
+        worksheetData.push(newHeaders);
+
+        flattenGroups.forEach(item => {
+            const aiData = mergeMap[item.id] || { status: 'Complete', restored_text: item.q_text };
+            const fullRow = rowMap[item.id] || [];
+            worksheetData.push([...fullRow, aiData.status, aiData.restored_text]);
+        });
+
+        const workbook = XLSX.utils.book_new();
+        const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'AI Restored Questions');
+
+        const outBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+        const b64Excel = Buffer.from(outBuffer).toString('base64');
+        const fileId = crypto.randomUUID();
+
+        await c.env.DB.prepare('INSERT INTO generated_files (id, data_base64) VALUES (?, ?)').bind(fileId, b64Excel).run();
+
+        const incomplete_count = allResults.filter(r => r.status === 'Incomplete').length;
+        return c.json({ download_id: fileId, incomplete_count, total: flattenGroups.length });
+    } catch (e) {
+        console.error('build-excel error:', e);
+        return c.json({ error: e.message }, 500);
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
+
 // Prompt Library (D1)
 app.get('/api/prompts', async (c) => {
     try {
