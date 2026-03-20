@@ -669,15 +669,32 @@ You receive a JSON array. Each element has:
 ═══════════════════════════════════════════════════════════
 STEP 0 — ENTITY DETECTION (run this FIRST, before any merging):
 ═══════════════════════════════════════════════════════════
-Read all questions and identify distinct medical conditions/diseases/entities present.
-- "Vitiligo" and "Melasma" are SEPARATE entities.
-- "Alopecia" and "Psoriasis" are SEPARATE entities.
-- "Hypertension" and "Diabetes" are SEPARATE entities.
-If TWO OR MORE distinct entities exist in the group:
-→ SPLIT questions by entity. Each entity gets its OWN subgroup (A, B, C...).
-→ Merge WITHIN each entity's subgroup separately.
-→ NEVER combine two distinct diseases into one merged question.
-If ALL questions involve the SAME single entity → proceed to direct merging.
+The ONLY valid basis for merging is: questions refer to the EXACT SAME named disease, condition, or drug.
+
+RULE A — SPECIALTY NAMES ARE NOT ENTITIES:
+Medical specialties and fields (Dermatology, Medicine, Surgery, Obstetrics, Pediatrics, Psychiatry, etc.) are NOT medical entities.
+"Diet in Dermatology" and "Apremilast in Dermatology" share only the specialty word "Dermatology" — they must NOT be merged. Diet and Apremilast are completely different topics.
+If two questions share only a specialty/field name but have different actual topics → keep them SEPARATE (Unmerged).
+
+RULE B — STRUCTURAL MATCH IS NOT SEMANTIC MATCH:
+If two questions have the same grammatical structure ("Evaluation and Management of X" + "Evaluation and Management of Y") but X ≠ Y, they must NOT be merged.
+"Evaluation and Management of Hirsutism" and "Evaluation and Management of Behçet's Syndrome" → SEPARATE. Hirsutism ≠ Behçet's Syndrome.
+Matching only on the verb/aspect phrase ("Evaluation and Management of", "Pathogenesis of", "Treatment of") is WRONG. You must match on the DISEASE/CONDITION name.
+
+RULE C — CLINICALLY RELATED ≠ SAME ENTITY:
+Even if two conditions are clinically related (e.g., PCOS causes Hirsutism), they are SEPARATE exam topics if they have different names. Do not merge them.
+"Vitiligo" and "Melasma" → SEPARATE.
+"Alopecia" and "Psoriasis" → SEPARATE.
+"Hirsutism" and "PCOS" → SEPARATE.
+"Hypertension" and "Diabetes" → SEPARATE even if they co-exist.
+
+WHEN TO MERGE (the only valid case):
+Two or more questions may be merged ONLY if they name the EXACT SAME disease/condition AND ask about different aspects of it.
+Examples of valid merging:
+→ "Management of vitiligo" + "Treatment of vitiligo" → same entity (vitiligo), can merge.
+→ "Pathogenesis of psoriasis" + "Clinical features of psoriasis" → same entity (psoriasis), can merge.
+
+If TWO OR MORE distinct entities exist in the group: assign each entity its own subgroup (A, B, C...) and merge only within each entity's subgroup.
 
 ═══════════════════════════════════════════════════════════
 STEP 1 — MERGING RULES:
@@ -685,20 +702,19 @@ STEP 1 — MERGING RULES:
 Within each entity/subgroup:
 - Questions asking about DIFFERENT aspects of the SAME entity (diagnosis, management, pathogenesis, etc.) → MERGE.
 - Combine their sub-asks naturally. Do not repeat sub-topics.
-- Questions that do NOT fit any entity's theme → mark as Unmerged, assign to their own sub-subgroup.
-- CRITICAL: Every question index (0, 1, 2, ..., N) MUST appear in exactly one result's mergedIndices. No index should be skipped or duplicated.
+- Questions that do NOT fit → mark as Unmerged, assign their own sub-subgroup.
+- CRITICAL: Every question index (0, 1, 2, ..., N) MUST appear in exactly one result's mergedIndices. Never skip or duplicate.
 
 ═══════════════════════════════════════════════════════════
-STEP 2 — QUESTION FRAMING (MOST IMPORTANT RULE):
+STEP 2 — QUESTION FRAMING:
 ═══════════════════════════════════════════════════════════
 NEVER use: "What is", "What are", "Discuss", "Describe", "Explain", "Write about", "Give an account of".
-Frame merged questions as DIRECT TOPIC STATEMENTS like a medical exam question:
+Frame merged questions as DIRECT TOPIC STATEMENTS:
 ✓ CORRECT: "Diagnosis and management of vitiligo."
 ✓ CORRECT: "Pathogenesis, clinical features and treatment of melasma."
-✓ CORRECT: "Etiology and complications of psoriasis."
 ✗ WRONG: "What are the diagnosis and management of vitiligo?"
 ✗ WRONG: "Discuss the pathogenesis, clinical features and treatment of melasma."
-If a question is Unmerged and kept as-is, clean it minimally — remove leading "a)", "b)", "c)" numbering if present, but keep the core text.
+If Unmerged, clean minimally — remove leading "a)", "b)", "c)" numbering but keep core text.
 
 ═══════════════════════════════════════════════════════════
 OUTPUT FORMAT:
@@ -706,12 +722,14 @@ OUTPUT FORMAT:
 Return ONLY a valid JSON array. For each subgroup:
 {
   "groupId": "G1",
-  "subGroup": "A",           // "A" for first, "B"/"C" for additional entities or outliers. null if only one result.
+  "subGroup": null,          // null if this group produces only ONE output row. Use "A","B","C" ONLY if the group is split into multiple rows.
   "status": "Merged",        // "Merged" or "Unmerged"
-  "mergedQuestion": "...",   // The merged topic statement OR original cleaned question if Unmerged
-  "mergedIndices": [0, 1, 2] // ALL indices included — MANDATORY, never empty []
+  "mergedQuestion": "...",   // Direct topic statement, or original cleaned text if Unmerged
+  "mergedIndices": [0, 1, 2] // ALL indices — MANDATORY, never empty []
 }
-REMINDER: sum of all mergedIndices across all subgroups MUST equal totalQuestions.`;
+REMINDER: sum of all mergedIndices across all subgroups MUST equal totalQuestions.
+REMINDER: subGroup must be null (not "A") when this group produces exactly ONE output row.`;
+
 
 
         const messages = [{ role: 'user', content: JSON.stringify(groups) }];
