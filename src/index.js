@@ -658,28 +658,61 @@ app.post('/api/ai-sorter', async (c) => {
             return c.json({ error: 'groups array is required' }, 400);
         }
 
-        const SORTER_PROMPT = `You are a precise medical question merger AI.
-You will receive a JSON array of duplicate question groups. Each group has:
-- "groupId": the group identifier (e.g. "G1")
-- "repQuestion": the representative question text
-- "similarQuestions": array of similar question texts
-- "indices": position indices (0 = rep, 1+ = similar)
+        const SORTER_PROMPT = `You are a precise medical exam question merger AI working on Indian medical university exam question banks.
 
-Your task for each group:
-1. Read the repQuestion and all similarQuestions carefully.
-2. Determine which questions share the SAME core medical topic/disease.
-3. For questions sharing the same core topic: MERGE into one comprehensive question covering ALL their sub-asks. Combine naturally, do not repeat sub-topics.
-4. Questions NOT sharing the core topic: separate unmerged entries.
-5. All same topic → one merged result. Partial match → subgroups (A = merged, B/C = outliers).
+You receive a JSON array. Each element has:
+- "groupId": group ID (e.g. "G1")
+- "repQuestion": the representative question text (index 0)
+- "similarQuestions": array of similar question texts (indices 1, 2, 3, ...)
+- "totalQuestions": total count = 1 (rep) + similarQuestions.length — you MUST account for ALL of these in your output
 
-Return ONLY a valid JSON array. Each element:
+═══════════════════════════════════════════════════════════
+STEP 0 — ENTITY DETECTION (run this FIRST, before any merging):
+═══════════════════════════════════════════════════════════
+Read all questions and identify distinct medical conditions/diseases/entities present.
+- "Vitiligo" and "Melasma" are SEPARATE entities.
+- "Alopecia" and "Psoriasis" are SEPARATE entities.
+- "Hypertension" and "Diabetes" are SEPARATE entities.
+If TWO OR MORE distinct entities exist in the group:
+→ SPLIT questions by entity. Each entity gets its OWN subgroup (A, B, C...).
+→ Merge WITHIN each entity's subgroup separately.
+→ NEVER combine two distinct diseases into one merged question.
+If ALL questions involve the SAME single entity → proceed to direct merging.
+
+═══════════════════════════════════════════════════════════
+STEP 1 — MERGING RULES:
+═══════════════════════════════════════════════════════════
+Within each entity/subgroup:
+- Questions asking about DIFFERENT aspects of the SAME entity (diagnosis, management, pathogenesis, etc.) → MERGE.
+- Combine their sub-asks naturally. Do not repeat sub-topics.
+- Questions that do NOT fit any entity's theme → mark as Unmerged, assign to their own sub-subgroup.
+- CRITICAL: Every question index (0, 1, 2, ..., N) MUST appear in exactly one result's mergedIndices. No index should be skipped or duplicated.
+
+═══════════════════════════════════════════════════════════
+STEP 2 — QUESTION FRAMING (MOST IMPORTANT RULE):
+═══════════════════════════════════════════════════════════
+NEVER use: "What is", "What are", "Discuss", "Describe", "Explain", "Write about", "Give an account of".
+Frame merged questions as DIRECT TOPIC STATEMENTS like a medical exam question:
+✓ CORRECT: "Diagnosis and management of vitiligo."
+✓ CORRECT: "Pathogenesis, clinical features and treatment of melasma."
+✓ CORRECT: "Etiology and complications of psoriasis."
+✗ WRONG: "What are the diagnosis and management of vitiligo?"
+✗ WRONG: "Discuss the pathogenesis, clinical features and treatment of melasma."
+If a question is Unmerged and kept as-is, clean it minimally — remove leading "a)", "b)", "c)" numbering if present, but keep the core text.
+
+═══════════════════════════════════════════════════════════
+OUTPUT FORMAT:
+═══════════════════════════════════════════════════════════
+Return ONLY a valid JSON array. For each subgroup:
 {
   "groupId": "G1",
-  "subGroup": "A",
-  "status": "Merged",
-  "mergedQuestion": "...",
-  "mergedIndices": [0, 1, 2]
-}`;
+  "subGroup": "A",           // "A" for first, "B"/"C" for additional entities or outliers. null if only one result.
+  "status": "Merged",        // "Merged" or "Unmerged"
+  "mergedQuestion": "...",   // The merged topic statement OR original cleaned question if Unmerged
+  "mergedIndices": [0, 1, 2] // ALL indices included — MANDATORY, never empty []
+}
+REMINDER: sum of all mergedIndices across all subgroups MUST equal totalQuestions.`;
+
 
         const messages = [{ role: 'user', content: JSON.stringify(groups) }];
         let results = [];
