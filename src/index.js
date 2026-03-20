@@ -650,11 +650,10 @@ app.delete('/api/chat-prompts/:id', async (c) => {
 });
 
 // ══ AI Repeat Sorter Endpoint ══════════════════════════════════════════════
-// Accepts batches of duplicate groups, merges questions using Gemini AI
+// Accepts ONE batch of groups per call (frontend handles iteration + progress)
 app.post('/api/ai-sorter', async (c) => {
     try {
-        const { groups } = await c.req.json();
-        // groups: [{ groupId, repQuestion, similarQuestions: [], years: [] }]
+        const { groups, logUsageOnLastBatch, totalGroupsForLog } = await c.req.json();
         if (!Array.isArray(groups) || groups.length === 0) {
             return c.json({ error: 'groups array is required' }, 400);
         }
@@ -663,85 +662,68 @@ app.post('/api/ai-sorter', async (c) => {
 You will receive a JSON array of duplicate question groups. Each group has:
 - "groupId": the group identifier (e.g. "G1")
 - "repQuestion": the representative question text
-- "similarQuestions": array of similar question texts (pipe-separated in input, split into array here)
-- "indices": which index within the group each question corresponds to (0 = rep, 1 = first similar, etc.)
+- "similarQuestions": array of similar question texts
+- "indices": position indices (0 = rep, 1+ = similar)
 
 Your task for each group:
 1. Read the repQuestion and all similarQuestions carefully.
 2. Determine which questions share the SAME core medical topic/disease.
-3. For questions that share the same core topic: MERGE them into one comprehensive question that covers ALL their sub-asks. Combine naturally — do not repeat sub-topics.
-4. Questions that do NOT share the same core topic as the majority: leave them as separate unmerged entries.
-5. If ALL questions share the same topic: one merged result for the group.
-6. If PARTIAL match: create subgroups — A for the merged set, B/C/D for unmerged outliers.
+3. For questions sharing the same core topic: MERGE into one comprehensive question covering ALL their sub-asks. Combine naturally, do not repeat sub-topics.
+4. Questions NOT sharing the core topic: separate unmerged entries.
+5. All same topic → one merged result. Partial match → subgroups (A = merged, B/C = outliers).
 
 Return ONLY a valid JSON array. Each element:
 {
   "groupId": "G1",
-  "subGroup": "A",        // "A" for first/merged, "B"/"C" for unmerged outliers, null if single result
-  "status": "Merged",     // "Merged" or "Unmerged"
-  "mergedQuestion": "...", // The merged or original question text
-  "mergedIndices": [0, 1, 2] // indices of questions included in this result (0=rep, 1=first similar, etc.)
+  "subGroup": "A",
+  "status": "Merged",
+  "mergedQuestion": "...",
+  "mergedIndices": [0, 1, 2]
 }`;
 
-        let totalInputTokens = 0;
-        let totalOutputTokens = 0;
-        let allResults = [];
+        const messages = [{ role: 'user', content: JSON.stringify(groups) }];
+        let results = [];
+        let inputTokens = 0;
+        let outputTokens = 0;
 
-        // Process each group (small batches of up to 5)
-        const BATCH_SIZE = 5;
-        for (let i = 0; i < groups.length; i += BATCH_SIZE) {
-            const batch = groups.slice(i, i + BATCH_SIZE);
-            const messages = [{ role: 'user', content: JSON.stringify(batch) }];
-
-            let attempts = 0;
-            let success = false;
-            while (attempts < 3 && !success) {
-                attempts++;
-                try {
-                    const aiRes = await chatWithGemini(messages, [], SORTER_PROMPT, c.env);
-                    let parsed = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
-                    if (!Array.isArray(parsed)) parsed = [parsed];
-                    allResults.push(...parsed);
-                    totalInputTokens += aiRes.usage?.promptTokenCount || 0;
-                    totalOutputTokens += aiRes.usage?.candidatesTokenCount || 0;
-                    success = true;
-                } catch (e) {
-                    const isRateLimit = e.message && (e.message.includes('429') || e.message.toLowerCase().includes('rate'));
-                    if (isRateLimit && attempts < 3) {
-                        await new Promise(r => setTimeout(r, 35000));
-                    } else {
-                        // Fallback: mark all as unmerged
-                        batch.forEach(g => {
-                            allResults.push({
-                                groupId: g.groupId, subGroup: null,
-                                status: 'Error', mergedQuestion: g.repQuestion,
-                                mergedIndices: [0]
-                            });
-                        });
-                        success = true;
-                    }
+        // Single AI call for this batch (retry once on rate-limit)
+        let attempts = 0;
+        while (attempts < 2) {
+            attempts++;
+            try {
+                const aiRes = await chatWithGemini(messages, [], SORTER_PROMPT, c.env);
+                let parsed = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
+                if (!Array.isArray(parsed)) parsed = [parsed];
+                results = parsed;
+                inputTokens = aiRes.usage?.promptTokenCount || 0;
+                outputTokens = aiRes.usage?.candidatesTokenCount || 0;
+                break;
+            } catch (e) {
+                const isRateLimit = e.message && (e.message.includes('429') || e.message.toLowerCase().includes('rate'));
+                if (isRateLimit && attempts < 2) {
+                    await new Promise(r => setTimeout(r, 30000));
+                } else {
+                    // Fallback: return groups as unmerged
+                    results = groups.map(g => ({
+                        groupId: g.groupId, subGroup: null,
+                        status: 'Error', mergedQuestion: g.repQuestion, mergedIndices: [0]
+                    }));
+                    break;
                 }
-            }
-            // Rate limit buffer between batches
-            if (i + BATCH_SIZE < groups.length) {
-                await new Promise(r => setTimeout(r, 7000));
             }
         }
 
-        // Log usage to D1
-        await logUsage(c.env, c, 'ai_repeat_sorter', {
-            input: totalInputTokens,
-            output: totalOutputTokens,
-            total: totalInputTokens + totalOutputTokens
-        }, groups.length);
+        // Log to D1 only when frontend signals this is the last batch
+        if (logUsageOnLastBatch) {
+            await logUsage(c.env, c, 'ai_repeat_sorter', {
+                input: inputTokens, output: outputTokens,
+                total: inputTokens + outputTokens
+            }, totalGroupsForLog || groups.length);
+        }
 
         return c.json({
-            results: allResults,
-            usage: {
-                input_tokens: totalInputTokens,
-                output_tokens: totalOutputTokens,
-                total_tokens: totalInputTokens + totalOutputTokens
-            }
+            results,
+            usage: { input_tokens: inputTokens, output_tokens: outputTokens, total_tokens: inputTokens + outputTokens }
         });
     } catch (error) {
         console.error('AI Sorter error:', error);
