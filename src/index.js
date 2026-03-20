@@ -649,26 +649,145 @@ app.delete('/api/chat-prompts/:id', async (c) => {
     }
 });
 
-// Admin Analytics Endpoint
+// ══ AI Repeat Sorter Endpoint ══════════════════════════════════════════════
+// Accepts batches of duplicate groups, merges questions using Gemini AI
+app.post('/api/ai-sorter', async (c) => {
+    try {
+        const { groups } = await c.req.json();
+        // groups: [{ groupId, repQuestion, similarQuestions: [], years: [] }]
+        if (!Array.isArray(groups) || groups.length === 0) {
+            return c.json({ error: 'groups array is required' }, 400);
+        }
+
+        const SORTER_PROMPT = `You are a precise medical question merger AI.
+You will receive a JSON array of duplicate question groups. Each group has:
+- "groupId": the group identifier (e.g. "G1")
+- "repQuestion": the representative question text
+- "similarQuestions": array of similar question texts (pipe-separated in input, split into array here)
+- "indices": which index within the group each question corresponds to (0 = rep, 1 = first similar, etc.)
+
+Your task for each group:
+1. Read the repQuestion and all similarQuestions carefully.
+2. Determine which questions share the SAME core medical topic/disease.
+3. For questions that share the same core topic: MERGE them into one comprehensive question that covers ALL their sub-asks. Combine naturally — do not repeat sub-topics.
+4. Questions that do NOT share the same core topic as the majority: leave them as separate unmerged entries.
+5. If ALL questions share the same topic: one merged result for the group.
+6. If PARTIAL match: create subgroups — A for the merged set, B/C/D for unmerged outliers.
+
+Return ONLY a valid JSON array. Each element:
+{
+  "groupId": "G1",
+  "subGroup": "A",        // "A" for first/merged, "B"/"C" for unmerged outliers, null if single result
+  "status": "Merged",     // "Merged" or "Unmerged"
+  "mergedQuestion": "...", // The merged or original question text
+  "mergedIndices": [0, 1, 2] // indices of questions included in this result (0=rep, 1=first similar, etc.)
+}`;
+
+        let totalInputTokens = 0;
+        let totalOutputTokens = 0;
+        let allResults = [];
+
+        // Process each group (small batches of up to 5)
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < groups.length; i += BATCH_SIZE) {
+            const batch = groups.slice(i, i + BATCH_SIZE);
+            const messages = [{ role: 'user', content: JSON.stringify(batch) }];
+
+            let attempts = 0;
+            let success = false;
+            while (attempts < 3 && !success) {
+                attempts++;
+                try {
+                    const aiRes = await chatWithGemini(messages, [], SORTER_PROMPT, c.env);
+                    let parsed = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
+                    if (!Array.isArray(parsed)) parsed = [parsed];
+                    allResults.push(...parsed);
+                    totalInputTokens += aiRes.usage?.promptTokenCount || 0;
+                    totalOutputTokens += aiRes.usage?.candidatesTokenCount || 0;
+                    success = true;
+                } catch (e) {
+                    const isRateLimit = e.message && (e.message.includes('429') || e.message.toLowerCase().includes('rate'));
+                    if (isRateLimit && attempts < 3) {
+                        await new Promise(r => setTimeout(r, 35000));
+                    } else {
+                        // Fallback: mark all as unmerged
+                        batch.forEach(g => {
+                            allResults.push({
+                                groupId: g.groupId, subGroup: null,
+                                status: 'Error', mergedQuestion: g.repQuestion,
+                                mergedIndices: [0]
+                            });
+                        });
+                        success = true;
+                    }
+                }
+            }
+            // Rate limit buffer between batches
+            if (i + BATCH_SIZE < groups.length) {
+                await new Promise(r => setTimeout(r, 7000));
+            }
+        }
+
+        // Log usage to D1
+        await logUsage(c.env, c, 'ai_repeat_sorter', {
+            input: totalInputTokens,
+            output: totalOutputTokens,
+            total: totalInputTokens + totalOutputTokens
+        }, groups.length);
+
+        return c.json({
+            results: allResults,
+            usage: {
+                input_tokens: totalInputTokens,
+                output_tokens: totalOutputTokens,
+                total_tokens: totalInputTokens + totalOutputTokens
+            }
+        });
+    } catch (error) {
+        console.error('AI Sorter error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// Admin Analytics Endpoint (upgraded with per-feature breakdown + cost)
 app.get('/api/admin/analytics', async (c) => {
     try {
         const reqUserEmail = c.req.query('userEmail');
         const userFilterClause = reqUserEmail ? "AND user_email = ?" : "";
         const userParams = reqUserEmail ? [reqUserEmail] : [];
 
-        // Get All Unique Users for Dropdown
-        const allUsers = await c.env.DB.prepare(`
-            SELECT DISTINCT user_email FROM usage_logs ORDER BY user_email ASC
-        `).all();
+        // All unique users
+        const allUsers = await c.env.DB.prepare(
+            'SELECT DISTINCT user_email FROM usage_logs ORDER BY user_email ASC'
+        ).all();
 
-        // Get Daily Totals (IST Timezone)
+        // Per-user per-feature breakdown (all time)
+        const perUserFeature = await c.env.DB.prepare(`
+            SELECT
+                user_email,
+                event_type,
+                COUNT(*) as operations,
+                SUM(token_input) as total_input,
+                SUM(token_output) as total_output,
+                SUM(token_total) as total_tokens,
+                MAX(DATETIME(created_at, '+5 hours', '+30 minutes')) as last_used
+            FROM usage_logs
+            WHERE 1=1 ${userFilterClause}
+            GROUP BY user_email, event_type
+            ORDER BY user_email, total_tokens DESC
+        `).bind(...userParams).all();
+
+        // Daily totals (last 30 days, IST)
         const dailyTotals = await c.env.DB.prepare(`
-            SELECT 
+            SELECT
                 DATE(created_at, '+5 hours', '+30 minutes') as date,
                 SUM(token_total) as total_tokens,
+                SUM(token_input) as total_input,
+                SUM(token_output) as total_output,
                 COUNT(CASE WHEN event_type = 'extraction' THEN 1 END) as extractions,
+                COUNT(CASE WHEN event_type = 'excel_merger' THEN 1 END) as context_restorations,
+                COUNT(CASE WHEN event_type = 'ai_repeat_sorter' THEN 1 END) as repeat_sorts,
                 COUNT(CASE WHEN event_type = 'chat' THEN 1 END) as chats,
-                COUNT(CASE WHEN event_type = 'excel_merger' THEN 1 END) as merges,
                 COUNT(DISTINCT user_email) as active_users
             FROM usage_logs
             WHERE 1=1 ${userFilterClause}
@@ -677,11 +796,13 @@ app.get('/api/admin/analytics', async (c) => {
             LIMIT 30
         `).bind(...userParams).all();
 
-        // Get User Breakdown (Today in IST)
+        // Today's user breakdown (IST)
         const userBreakdown = await c.env.DB.prepare(`
-            SELECT 
+            SELECT
                 user_email,
                 SUM(token_total) as total_tokens,
+                SUM(token_input) as total_input,
+                SUM(token_output) as total_output,
                 COUNT(*) as events,
                 MAX(DATETIME(created_at, '+5 hours', '+30 minutes')) as last_active
             FROM usage_logs
@@ -691,25 +812,43 @@ app.get('/api/admin/analytics', async (c) => {
             ORDER BY total_tokens DESC
         `).bind(...userParams).all();
 
-        // Get Recent Activity (Convert to IST)
+        // Recent activity
         const recentActivity = await c.env.DB.prepare(`
-            SELECT 
-                id, 
-                user_email, 
-                event_type, 
-                token_total, 
-                DATETIME(created_at, '+5 hours', '+30 minutes') as created_at 
-            FROM usage_logs 
+            SELECT
+                id,
+                user_email,
+                event_type,
+                token_input,
+                token_output,
+                token_total,
+                file_count,
+                DATETIME(created_at, '+5 hours', '+30 minutes') as created_at
+            FROM usage_logs
             WHERE 1=1 ${userFilterClause}
-            ORDER BY id DESC 
-            LIMIT 20
+            ORDER BY id DESC
+            LIMIT 30
+        `).bind(...userParams).all();
+
+        // All-time totals per feature (for summary cards)
+        const featureTotals = await c.env.DB.prepare(`
+            SELECT
+                event_type,
+                COUNT(*) as operations,
+                SUM(token_input) as total_input,
+                SUM(token_output) as total_output,
+                SUM(token_total) as total_tokens
+            FROM usage_logs
+            WHERE 1=1 ${userFilterClause}
+            GROUP BY event_type
         `).bind(...userParams).all();
 
         return c.json({
             allUsers: allUsers.results ? allUsers.results.map(r => r.user_email) : [],
+            perUserFeature: perUserFeature.results || [],
             dailyTotals: dailyTotals.results || [],
             userBreakdown: userBreakdown.results || [],
-            recentActivity: recentActivity.results || []
+            recentActivity: recentActivity.results || [],
+            featureTotals: featureTotals.results || []
         });
     } catch (error) {
         console.error('Analytics error:', error);
