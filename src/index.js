@@ -469,7 +469,7 @@ app.post('/api/restore-batch', async (c) => {
 // 3. Build final Excel from all accumulated results → stores in D1 and returns download_id
 app.post('/api/build-excel', async (c) => {
     try {
-        const { allResults, flattenGroups, headers, rows } = await c.req.json();
+        const { allResults, flattenGroups, headers, rows, usage } = await c.req.json();
 
         const mergeMap = {};
         allResults.forEach(r => { mergeMap[r.id] = { status: r.status, restored_text: r.restored_text }; });
@@ -507,6 +507,14 @@ app.post('/api/build-excel', async (c) => {
         const fileId = crypto.randomUUID();
 
         await c.env.DB.prepare('INSERT INTO generated_files (id, data_base64) VALUES (?, ?)').bind(fileId, b64Excel).run();
+
+        if (usage && (usage.input > 0 || usage.output > 0)) {
+            await logUsage(c.env, c, 'excel_merger', {
+                input: usage.input,
+                output: usage.output,
+                total: usage.input + usage.output
+            }, 1);
+        }
 
         const incomplete_count = allResults.filter(r => r.status === 'Incomplete').length;
         const modified_count = worksheetData.slice(1).filter(r => r[r.length - 1]?.startsWith('⚠️')).length;
