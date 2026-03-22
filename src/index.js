@@ -138,6 +138,8 @@ app.post('/api/merge-excel', async (c) => {
         }
 
         const arrayBuffer = await excelFile.arrayBuffer();
+        // Capture user email HERE before entering SSE stream (c.req not accessible inside stream callback)
+        const userEmail = c.req.header('X-User-Email') || c.req.header('Cf-Access-Authenticated-User-Email') || 'anonymous@internal.com';
         
         // Return a Server-Sent Events Stream for live updates
         return stream(c, async (streamWriter) => {
@@ -297,12 +299,14 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "sta
             'INSERT INTO generated_files (id, data_base64) VALUES (?, ?)'
         ).bind(fileId, b64Excel).run();
 
-        // Log Usage
-        await logUsage(c.env, c, 'excel_merger', {
-             input: totalInputTokens,
-             output: totalOutputTokens,
-             total: totalInputTokens + totalOutputTokens
-        }, 1);
+        // Log Usage — use direct DB insert since c.req is unavailable inside SSE stream
+        try {
+            await c.env.DB.prepare(
+                'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count) VALUES (?, ?, ?, ?, ?, ?)'
+            ).bind(userEmail, 'excel_merger', totalInputTokens, totalOutputTokens, totalInputTokens + totalOutputTokens, 1).run();
+        } catch (logErr) {
+            console.error('Usage log error (excel_merger):', logErr);
+        }
 
         // Build final preview rows retaining original text for UI rendering
         const previewRows = allMergedResults.slice(0, 10).map(r => {
