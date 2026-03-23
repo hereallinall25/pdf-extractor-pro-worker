@@ -737,10 +737,10 @@ Return ONLY a valid JSON array. For each subgroup:
   "subGroup": null,          // null if this group produces only ONE output row. Use "A","B","C" ONLY if the group is split into multiple rows.
   "status": "Merged",        // MUST be "Unmerged" if mergedIndices contains only ONE number.
   "mergedQuestion": "...",   // Direct topic statement, or original cleaned text if Unmerged
-  "mergedIndices": [0, 1]    // ALL indices. NEVER invent indices (e.g., if totalQuestions=2, you can only use 0 and 1).
+  "mergedIndices": [0, 1]    // ALL indices. NEVER invent indices.
 }
-CRITICAL REMINDER 1: The AI MUST NOT hallucinate mathematical indices! If totalQuestions=2, the ONLY valid indices are 0 and 1. NEVER output [0, 1, 2, 3].
-CRITICAL REMINDER 2: The sum length of all mergedIndices arrays across all subgroups MUST exactly equal 'totalQuestions'.
+CRITICAL REMINDER 1: The 'mergedIndices' array is strictly LOCAL to each groupId! You MUST reset the counter to 0 for every single group. NEVER count continuously across multiple groups. (e.g., G1 is [0, 1] and G2 MUST start over at [0, 1]... NOT [2, 3]).
+CRITICAL REMINDER 2: The sum length of all mergedIndices arrays across a subgroup MUST exactly equal 'totalQuestions' for that group.
 CRITICAL REMINDER 3: If mergedIndices has length 1 (e.g. [0]), the status MUST be "Unmerged". You can ONLY use "Merged" for 2 or more indices.
 CRITICAL REMINDER 4: subGroup must be null (not "A") when this group produces exactly ONE output row.`;
 
