@@ -681,28 +681,30 @@ You receive a JSON array. Each element has:
 ═══════════════════════════════════════════════════════════
 STEP 0 — ENTITY DETECTION (run this FIRST, before any merging):
 ═══════════════════════════════════════════════════════════
-The ONLY valid basis for merging is: questions refer to the EXACT SAME named disease, condition, or drug.
+The ONLY valid basis for merging is: questions refer to the EXACT SAME specific core academic/clinical topic or entity.
+This applies across all medical specialties: the entity could be a disease (e.g., Vitiligo), a surgical protocol (e.g., Damage Control Orthopedics), an anatomical structure (e.g., Brachial Plexus), a biochemical pathway (e.g., Krebs Cycle), or a physiological principle. As long as the specific core topic is identical, they are candidates for merging.
 
 RULE A — SPECIALTY NAMES ARE NOT ENTITIES:
 Medical specialties and fields (Dermatology, Medicine, Surgery, Obstetrics, Pediatrics, Psychiatry, etc.) are NOT medical entities.
 "Diet in Dermatology" and "Apremilast in Dermatology" share only the specialty word "Dermatology" — they must NOT be merged. Diet and Apremilast are completely different topics.
-If two questions share only a specialty/field name but have different actual topics → keep them SEPARATE (Unmerged).
 
 RULE B — STRUCTURAL MATCH IS NOT SEMANTIC MATCH:
 If two questions have the same grammatical structure ("Evaluation and Management of X" + "Evaluation and Management of Y") but X ≠ Y, they must NOT be merged.
-"Evaluation and Management of Hirsutism" and "Evaluation and Management of Behçet's Syndrome" → SEPARATE. Hirsutism ≠ Behçet's Syndrome.
-Matching only on the verb/aspect phrase ("Evaluation and Management of", "Pathogenesis of", "Treatment of") is WRONG. You must match on the DISEASE/CONDITION name.
+Matching only on the verb/aspect phrase ("Evaluation and Management of", "Pathogenesis of") is WRONG. You must match on the SPECIFIC ENTITY name.
 
 RULE C — CLINICALLY RELATED ≠ SAME ENTITY:
 Even if two conditions are clinically related (e.g., PCOS causes Hirsutism), they are SEPARATE exam topics if they have different names. Do not merge them.
 "Vitiligo" and "Melasma" → SEPARATE.
-"Alopecia" and "Psoriasis" → SEPARATE.
-"Hirsutism" and "PCOS" → SEPARATE.
-"Hypertension" and "Diabetes" → SEPARATE even if they co-exist.
+"Polytrauma" and "Crush Syndrome" → SEPARATE (do not merge a specific complication into a broader umbrella topic!).
 
-WHEN TO MERGE (the only valid case):
-Two or more questions may be merged ONLY if they name the EXACT SAME disease/condition AND ask about different aspects of it.
+RULE D — EXACT DUPLICATES:
+If two or more questions are identical or virtually identical (asking the exact same thing), you MUST merge them into a single question to de-duplicate the list.
+
+WHEN TO MERGE (the only valid cases):
+1. DE-DUPLICATION: The questions are identical or virtually identical.
+2. DIFFERENT ASPECTS: The questions name the EXACT SAME core entity/topic AND ask about different aspects of it.
 Examples of valid merging:
+→ "Damage control surgery in orthopaedics." + "Principles of early total care and damage control Orthopedics." → same core entity (damage control orthopedics), can merge.
 → "Management of vitiligo" + "Treatment of vitiligo" → same entity (vitiligo), can merge.
 → "Pathogenesis of psoriasis" + "Clinical features of psoriasis" → same entity (psoriasis), can merge.
 
