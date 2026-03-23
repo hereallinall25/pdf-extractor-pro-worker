@@ -713,19 +713,17 @@ STEP 1 — MERGING RULES:
 ═══════════════════════════════════════════════════════════
 Within each entity/subgroup:
 - Questions asking about DIFFERENT aspects of the SAME entity (diagnosis, management, pathogenesis, etc.) → MERGE.
-- Combine their sub-asks naturally. Do not repeat sub-topics.
+- INTELLIGENT REWRITING: Do NOT lazily concatenate questions using semicolons (;), dashes (-), or raw conjunctions. You MUST completely rewrite the overlapping concepts from scratch into a single, cohesive, fluent sentence that reads naturally as a high-quality professional exam question or academic topic.
 - Questions that do NOT fit → mark as Unmerged, assign their own sub-subgroup.
 - CRITICAL: Every question index (0, 1, 2, ..., N) MUST appear in exactly one result's mergedIndices. Never skip or duplicate.
 
 ═══════════════════════════════════════════════════════════
 STEP 2 — QUESTION FRAMING:
 ═══════════════════════════════════════════════════════════
-NEVER use: "What is", "What are", "Discuss", "Describe", "Explain", "Write about", "Give an account of".
-Frame merged questions as DIRECT TOPIC STATEMENTS:
-✓ CORRECT: "Diagnosis and management of vitiligo."
-✓ CORRECT: "Pathogenesis, clinical features and treatment of melasma."
-✗ WRONG: "What are the diagnosis and management of vitiligo?"
-✗ WRONG: "Discuss the pathogenesis, clinical features and treatment of melasma."
+You have full creative freedom to frame the merged question dynamically. Synthesize the text so it sounds like it was authored by a human professor, not stitched together mechanically.
+If a leading verb is necessary to make the sentence fluid (e.g., "Discuss the...", "Evaluate the...", "Outline the...", "Describe the..."), you MAY use it—but vary your framing intelligently so not every question starts the same way. Direct topic statements (e.g., "Evaluation and management of...") are also excellent.
+✗ BAD LAZY STITCH: "Pulseless pink hand following a supracondylar fracture of humerus in a child; management of supracondylar fracture with pink pulseless hand."
+✓ GOOD SYNTHESIS: "Discuss the evaluation and management of a pulseless pink hand following a supracondylar fracture of the humerus in a child."
 If Unmerged, clean minimally — remove leading "a)", "b)", "c)" numbering but keep core text.
 
 ═══════════════════════════════════════════════════════════
