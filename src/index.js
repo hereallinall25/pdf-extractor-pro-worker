@@ -153,18 +153,28 @@ app.post('/api/merge-excel', async (c) => {
                 const parsedData = await processExcelMerge(arrayBuffer);
                 
                 // 2. Prepare for Restore AI Call
-                const defaultPrompt = `You are a strict clinical AI medical editor. 
+                const defaultPrompt = `You are a strict clinical AI medical editor functioning as a VALIDATOR, not an appender.
 You will receive a JSON array of sub-questions. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
-Objects with the strict SAME 'group_id' belong to the same parent question and appear in sequential order.
+Objects with the strict SAME 'group_id' belong to the same parent question.
 CRITICAL INSTRUCTIONS:
-1. Evaluate each 'q_text' individually to decide if it is 'Complete' or 'Incomplete'.
-2. What is COMPLETE: Any statement that already contains the name of the specific disease, drug, or clinical condition is COMPLETE. If you can read the sentence and immediately know the exact medical noun being discussed, it is COMPLETE. 
-   Examples of COMPLETE: "Clinical presentation of senile osteoporosis.", "Fracture healing.", "Screening of patients prior to starting biological therapy in immunobullous disorder.", "Management of Hemangioma."
-   If it is COMPLETE, set status to 'Complete' and return the EXACT ORIGINAL 'q_text' as 'restored_text'. Do not change a single letter.
-3. What is INCOMPLETE: A question is ONLY INCOMPLETE if it uses a vague pronoun ("it", "they", "this", "that") OR completely lacks the core disease noun (e.g. "Clinical features and diagnostic criteria.", "Management of it.", "How would you investigate?").
-4. REWRITING INCOMPLETE QUESTIONS: If you mark it 'Incomplete', you MUST read the preceding question with the SAME 'group_id'. Find the missing disease/noun from the preceding question, and rewrite the incomplete question to include it.
-   Example: If 1a="Classify osteoporosis" and 1b="Clinical features.", you must return 'restored_text' as "Clinical features of osteoporosis." and status as 'Incomplete'.
-5. You MUST output EVERY single 'id' provided in the batch. Do not drop any items.
+1. THE ANCHOR IMMUNITY RULE:
+   Any question whose 'q_num' contains 'A' or 'a' (e.g., "1.a", "5A") OR is a standalone consecutive number with NO subpart letters (e.g., "6.", "7") is an ANCHOR. 
+   Anchors ONLY provide context; they NEVER receive context. 
+   For ALL Anchors: You MUST set status to 'Complete' and return the EXACT ORIGINAL 'q_text' unmodified. Zero exceptions.
+2. THE STANDALONE CONCEPT RULE ("Do No Harm"):
+   Scan 'b', 'c', or 'd' subparts for a primary medical entity.
+   If the sub-question already contains its own distinct medical disease, condition, anatomical structure, or specific procedure (e.g., "Mycetoma", "Adaptive immunity", "Meta-analysis", "Child sexual abuse"), do NOT touch it! 
+   If it already stands on its own medically, set status to 'Complete' and return the EXACT ORIGINAL 'q_text'. Do not fuse distinct concepts together.
+3. THE TRUE DEPENDENCY RULE (When to intervene):
+   You are ONLY allowed to mark a sub-question as 'Incomplete' and modify it if it is blatantly medically orphaned:
+   - It contains vague pronouns ("Their role in thermoregulation", "Management of it").
+   - It is a naked phrase missing a subject ("Complications.", "Clinical features.", "Investigations.").
+   ONLY in these valid orphan cases may you look at the Anchor ('a' subpart) of the same 'group_id' to extract the missing noun and append it.
+4. THE CLINICAL SCENARIO PROTECTION RULE:
+   If a question contains a clinical vignette/scenario (e.g., "A 20-year-old female presents with..."), you are FORBIDDEN from deleting, summarizing, or shortening the original text. You may only APPEND missing words.
+5. ANTI-HALLUCINATION PROTOCOL:
+   NEVER use brackets, placeholders (e.g. "[disease]"), or meta-commentary. If you cannot confidently determine the missing noun, fail gracefully by setting status to 'Complete' and returning the exact original text.
+6. Output EVERY single 'id' provided. Do not drop any items.
 Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
 
                 const systemPrompt = body.systemPrompt || defaultPrompt;
@@ -404,30 +414,36 @@ app.post('/api/parse-excel', async (c) => {
 });
 
 // 2. Restore a single batch of pre-parsed rows through AI → returns JSON results (fast, <30s)
-const DEFAULT_RESTORE_PROMPT = `You are a strict clinical AI medical editor.
+const DEFAULT_RESTORE_PROMPT = `You are a strict clinical AI medical editor functioning as a VALIDATOR, not an appender.
 You will receive a JSON array of sub-questions. Each object has an 'id', 'group_id', 'q_num', and 'q_text'.
-Objects with the SAME 'group_id' belong to the same parent question and appear in sequential sub-part order.
+Objects with the SAME 'group_id' belong to the same parent question.
 
 CRITICAL INSTRUCTIONS:
 
-0. ABSOLUTE RULE — 'a' SUBPARTS ARE ALWAYS COMPLETE AND NEVER MODIFIED:
-   Any sub-question whose 'q_num' ends with the letter 'a' (e.g. "1.a", "5a", "10.a") is the PRIMARY lead question.
-   You MUST always set status to 'Complete' and return the EXACT ORIGINAL 'q_text' unchanged. Do not alter punctuation, spacing, or a single character.
-   This rule overrides ALL other rules below.
+1. THE ANCHOR IMMUNITY RULE:
+   Any question whose 'q_num' contains 'A' or 'a' (e.g., "1.a", "5A") OR is a standalone consecutive number with NO subpart letters (e.g., "6.", "7") is an ANCHOR. 
+   Anchors ONLY provide context; they NEVER receive context. 
+   For ALL Anchors: You MUST set status to 'Complete' and return the EXACT ORIGINAL 'q_text' unmodified. Zero exceptions.
 
-1. For sub-questions 'b', 'c', 'd', etc. — evaluate each 'q_text' to decide if it is 'Complete' or 'Incomplete'.
+2. THE STANDALONE CONCEPT RULE ("Do No Harm"):
+   Scan 'b', 'c', or 'd' subparts for a primary medical entity.
+   If the sub-question already contains its own distinct medical disease, condition, anatomical structure, or specific procedure (e.g., "Mycetoma", "Adaptive immunity", "Meta-analysis", "Child sexual abuse"), do NOT touch it! 
+   If it already stands on its own medically, set status to 'Complete' and return the EXACT ORIGINAL 'q_text'. Do not fuse distinct concepts together.
 
-2. COMPLETE (non-'a' subparts): Any question that already contains the name of the specific disease, drug, or clinical condition. You can read it and immediately know the exact medical noun.
-   Examples: "Clinical presentation of senile osteoporosis.", "Management of Hemangioma."
-   If COMPLETE → set status 'Complete', return the EXACT ORIGINAL 'q_text' as 'restored_text'. Do NOT change a single character.
+3. THE TRUE DEPENDENCY RULE (When to intervene):
+   You are ONLY allowed to mark a sub-question as 'Incomplete' and modify it if it is blatantly medically orphaned:
+   - It contains vague pronouns ("Their role in thermoregulation", "Management of it").
+   - It is a naked phrase missing a subject ("Complications.", "Clinical features.", "Investigations.").
+   ONLY in these valid orphan cases may you look at the Anchor ('a' subpart) of the same 'group_id' to extract the missing noun and append it.
 
-3. INCOMPLETE (non-'a' subparts): ONLY if the question uses a vague pronoun ("it", "they", "this", "that") OR completely lacks the core disease noun (e.g. "Clinical features and diagnostic criteria.", "Management of it.").
+4. THE CLINICAL SCENARIO PROTECTION RULE:
+   If a question contains a clinical vignette/scenario (e.g., "A 20-year-old female presents with..."), you are FORBIDDEN from deleting, summarizing, or shortening the original text. You may only APPEND missing words.
 
-4. REWRITING INCOMPLETE QUESTIONS: Find the SAME question number's 'a' subpart (same 'group_id', q_num ending in 'a'). Extract the missing disease/noun from that 'a' subpart. Rewrite the incomplete question to include it.
-   Example: group_id="Q1", 1a="Classify osteoporosis", 1b="Clinical features." → restored_text for 1b = "Clinical features of osteoporosis.", status = 'Incomplete'.
+5. ANTI-HALLUCINATION PROTOCOL:
+   NEVER use brackets, placeholders (e.g. "[disease]"), or meta-commentary. If you cannot confidently determine the missing noun, fail gracefully by setting status to 'Complete' and returning the exact original text.
 
-5. Output EVERY single 'id' provided. Do not drop any.
-Return ONLY a valid JSON array with EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
+6. Output EVERY single 'id' provided. Do not drop any items.
+Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
 
 
 app.post('/api/restore-batch', async (c) => {
@@ -679,67 +695,59 @@ You receive a JSON array. Each element has:
 - "totalQuestions": total count = 1 (rep) + similarQuestions.length — you MUST account for ALL of these in your output
 
 ═══════════════════════════════════════════════════════════
-STEP 0 — ENTITY DETECTION (run this FIRST, before any merging):
+PRINCIPLE 1: THE LEDGER OF CONSERVATION (Zero Loss, Zero Duplication)
 ═══════════════════════════════════════════════════════════
-The ONLY valid basis for merging is: questions refer to the EXACT SAME specific core academic/clinical topic or entity.
-This applies across all medical specialties: the entity could be a disease (e.g., Vitiligo), a surgical protocol (e.g., Damage Control Orthopedics), an anatomical structure (e.g., Brachial Plexus), a biochemical pathway (e.g., Krebs Cycle), or a physiological principle. As long as the specific core topic is identical, they are candidates for merging.
-
-RULE A — SPECIALTY NAMES ARE NOT ENTITIES:
-Medical specialties and fields (Dermatology, Medicine, Surgery, Obstetrics, Pediatrics, Psychiatry, etc.) are NOT medical entities.
-"Diet in Dermatology" and "Apremilast in Dermatology" share only the specialty word "Dermatology" — they must NOT be merged. Diet and Apremilast are completely different topics.
-
-RULE B — STRUCTURAL MATCH IS NOT SEMANTIC MATCH:
-If two questions have the same grammatical structure ("Evaluation and Management of X" + "Evaluation and Management of Y") but X ≠ Y, they must NOT be merged.
-Matching only on the verb/aspect phrase ("Evaluation and Management of", "Pathogenesis of") is WRONG. You must match on the SPECIFIC ENTITY name.
-
-RULE C — CLINICALLY RELATED ≠ SAME ENTITY:
-Even if two conditions are clinically related (e.g., PCOS causes Hirsutism), they are SEPARATE exam topics if they have different names. Do not merge them.
-"Vitiligo" and "Melasma" → SEPARATE.
-"Polytrauma" and "Crush Syndrome" → SEPARATE (do not merge a specific complication into a broader umbrella topic!).
-
-RULE D — EXACT DUPLICATES:
-If two or more questions are identical or virtually identical (asking the exact same thing), you MUST merge them into a single question to de-duplicate the list.
-
-WHEN TO MERGE (the only valid cases):
-1. DE-DUPLICATION: The questions are identical or virtually identical.
-2. DIFFERENT ASPECTS: The questions name the EXACT SAME core entity/topic AND ask about different aspects of it.
-Examples of valid merging:
-→ "Damage control surgery in orthopaedics." + "Principles of early total care and damage control Orthopedics." → same core entity (damage control orthopedics), can merge.
-→ "Management of vitiligo" + "Treatment of vitiligo" → same entity (vitiligo), can merge.
-→ "Pathogenesis of psoriasis" + "Clinical features of psoriasis" → same entity (psoriasis), can merge.
-
-If TWO OR MORE distinct entities exist in the group: assign each entity its own subgroup (A, B, C...) and merge only within each entity's subgroup.
+There are exactly 'totalQuestions' in this group, indexed from 0 to (totalQuestions - 1). 
+EVERY SINGLE INDEX must appear in your output EXACTLY ONCE. 
+- You cannot drop an index (that deletes a question).
+- You cannot put an index in two different output rows (that hallucinates a duplicate).
+Validate your work logically: Do the 'mergedIndices' arrays across all your output objects collectively contain every integer from 0 to N-1 exactly once?
 
 ═══════════════════════════════════════════════════════════
-STEP 1 — MERGING RULES:
+PRINCIPLE 2: THE TWO-STEP BUCKET METHOD (Global Clustering)
 ═══════════════════════════════════════════════════════════
-Within each entity/subgroup:
-- Questions asking about DIFFERENT aspects of the SAME entity (diagnosis, management, pathogenesis, etc.) → MERGE.
-- INTELLIGENT REWRITING: Do NOT lazily concatenate questions using semicolons (;), dashes (-), or raw conjunctions. You MUST completely rewrite the overlapping concepts from scratch into a single, cohesive, fluent sentence that reads naturally as a high-quality professional exam question or academic topic.
-- Questions that do NOT fit → mark as Unmerged, assign their own sub-subgroup.
-- CRITICAL: Every question index (0, 1, 2, ..., N) MUST appear in exactly one result's mergedIndices. Never skip or duplicate.
+Do not just compare adjacent questions sequentially. Look at the ENTIRE group first.
+STEP 1 (Clustering): Identify the truly unique, specific Core Medical Entities in the group (e.g., "Vitiligo", "Psoriasis", "Crush Syndrome"). 
+- RULE A: Medical specialties (Dermatology, Surgery, etc.) are NOT entities.
+- RULE B: Structural similarities ("Management of X" vs "Management of Y") where X ≠ Y must NOT be merged.
+- RULE C: Clinically related but distinct diseases ("Vitiligo" ≠ "Melasma") must NOT be merged.
+- RULE D: IDENTICAL OR NEAR-IDENTICAL DUPLICATES MUST BE MERGED. This includes questions that describe the exact same medical entity even if they have different casing (e.g., "ECMO" vs "ecmo"), different punctuation, or minor spacing differences. If it represents the same clinical topic, merge it.
+STEP 2 (Assignment): Map every single index (0 to N-1) to exactly ONE of those entity buckets, regardless of the order they appear in the input array.
 
 ═══════════════════════════════════════════════════════════
-STEP 2 — QUESTION FRAMING:
+PRINCIPLE 3: DEMOGRAPHIC HARD STOP BOUNDARIES
 ═══════════════════════════════════════════════════════════
-You have full creative freedom to frame the merged question dynamically. Synthesize the text so it sounds like it was authored by a human professor, not stitched together mechanically.
-If a leading verb is necessary to make the sentence fluid (e.g., "Discuss the...", "Evaluate the...", "Outline the...", "Describe the..."), you MAY use it—but vary your framing intelligently so not every question starts the same way. Direct topic statements (e.g., "Evaluation and management of...") are also excellent.
-✗ BAD LAZY STITCH: "Pulseless pink hand following a supracondylar fracture of humerus in a child; management of supracondylar fracture with pink pulseless hand."
-✓ GOOD SYNTHESIS: "Discuss the evaluation and management of a pulseless pink hand following a supracondylar fracture of the humerus in a child."
-If Unmerged, clean minimally — remove leading "a)", "b)", "c)" numbering but keep core text.
+NEVER merge questions if they differ in fundamental clinical modifiers, because the clinical answer/management changes completely.
+HARD STOPS (Must remain UNMERGED from each other into SEPARATE buckets):
+- Age disparities: Adult vs. Pediatric / Neonatal vs. Elderly. (e.g., "Adult Polycystic Kidney Disease" ≠ "Infantile Polycystic Kidney Disease").
+- Sex disparities: Male vs. Female. (e.g., "Male Genital Discharge" ≠ "Female Vaginal Discharge").
+- Chronicity: Acute vs. Chronic.
+- Topography: Right vs. Left / Upper vs. Lower (if clinically distinct).
 
 ═══════════════════════════════════════════════════════════
-OUTPUT FORMAT:
+PRINCIPLE 4: SUPERSET SYNTHESIS (Intelligent Rewriting)
 ═══════════════════════════════════════════════════════════
-Return ONLY a valid JSON array. For each subgroup:
+For buckets containing 2 or more indices (MERGING IS OCCURRING):
+- Do NOT lazily concatenate strings with semicolons. Rewrite them from scratch into a cohesive "Superset" question.
+- THE GENERAL + SPECIFIC RULE: If your bucket contains a broad, isolated question about the entity itself (e.g., "Sezary syndrome") AND specific sub-aspect questions (e.g., "Treatment of Sezary syndrome"), your merged sentence MUST explicitly request a definition or general discussion of the entity before attaching the specific sub-aspects. 
+  * Correct Output: "Write a detailed note on Sezary syndrome, including its clinical features and treatment." 
+  * Incorrect Output: "Discuss the clinical features and treatment of Sezary syndrome." (This ignores the general isolated question).
+- Frame the synthesis professionally (e.g., "Discuss the...", "Evaluate the...", "Outline the...").
+For buckets containing only 1 index (NO MERGING OCCURRING):
+- Clean minimally (remove leading "a)", "b)", "1.") but keep the core text identical. DO NOT add "Discuss the..." if it wasn't there originally.
+
+═══════════════════════════════════════════════════════════
+OUTPUT FORMAT REQUIREMENTS
+═══════════════════════════════════════════════════════════
+Return ONLY a valid JSON array. For each basket/entity you created:
 {
-  "groupId": "G1",
-  "subGroup": null,          // null if this group produces only ONE output row. Use "A","B","C" ONLY if the group is split into multiple rows.
-  "status": "Merged",        // MUST be "Unmerged" if mergedIndices contains only ONE number.
-  "mergedQuestion": "...",   // Direct topic statement, or original cleaned text if Unmerged
-  "mergedIndices": [0, 1]    // ALL indices. NEVER invent indices.
+  "groupId": "G1",           // Exact same as input
+  "subGroup": null,          // Use "A", "B", "C" ONLY if the group is split into multiple rows. If all indices merged into one single output row, use null.
+  "status": "Merged",        // MUST be "Unmerged" if mergedIndices contains only ONE number. MUST be "Merged" if it contains 2 or more.
+  "mergedQuestion": "...",   // The newly synthesized Superset question, or the original cleaned text if Unmerged
+  "mergedIndices": [0, 1]    // The exact array of indices placed in this bucket. (e.g. [0, 2, 4])
 }
-CRITICAL REMINDER 1: The 'mergedIndices' array is strictly LOCAL to each groupId! You MUST reset the counter to 0 for every single group. NEVER count continuously across multiple groups. (e.g., G1 is [0, 1] and G2 MUST start over at [0, 1]... NOT [2, 3]).
+CRITICAL REMINDER 1: The 'mergedIndices' array is strictly LOCAL to each groupId! You MUST reset the counter to 0 for every single group. NEVER count continuously across multiple groups.
 CRITICAL REMINDER 2: The sum length of all mergedIndices arrays across a subgroup MUST exactly equal 'totalQuestions' for that group.
 CRITICAL REMINDER 3: If mergedIndices has length 1 (e.g. [0]), the status MUST be "Unmerged". You can ONLY use "Merged" for 2 or more indices.
 CRITICAL REMINDER 4: subGroup must be null (not "A") when this group produces exactly ONE output row.`;
