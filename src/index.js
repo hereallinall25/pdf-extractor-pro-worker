@@ -425,11 +425,12 @@ CRITICAL INSTRUCTIONS:
    Anchors ONLY provide context; they NEVER receive context. 
    For ALL Anchors: You MUST set status to 'Complete' and return the EXACT ORIGINAL 'q_text' unmodified. Zero exceptions.
 
-2. THE STANDALONE CONCEPT RULE ("Audit-First"):
+2. THE STANDALONE CONCEPT RULE (The "Medical Noun" Rule):
    Before attempting to restore, check if the question already contains its own distinct medical disease, condition, anatomical structure, or specific procedure.
-   - If a question is medically complete (e.g., "Excessive day sleepiness", "Mycetoma", "Adaptive immunity"), do NOT touch it! 
+   - If a question is medically complete (e.g., "Excessive day sleepiness", "Mycetoma", "Adaptive immunity", "Indications for Polysomnography", "Evaluation of small airways"), do NOT touch it! 
    - If it stands on its own, set status to 'Complete' and return the EXACT ORIGINAL 'q_text'.
-   - NEVER inject 'a' subpart context into a 'b' subpart if 'b' is already a valid standalone medical question.
+   - NEVER "synthesize" or link two different topics (e.g., do NOT add "in children" to "Evaluation of small airways" just because the anchor mentioned children). 
+   - Each sub-question ('b', 'c', etc.) should be treated as a separate standalone exam question if it contains a medical noun.
 
 3. THE TRUE DEPENDENCY RULE (When to intervene):
    You are ONLY allowed to mark a sub-question as 'Incomplete' and modify it if it is blatantly medically orphaned:
