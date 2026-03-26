@@ -718,7 +718,7 @@ STEP 1 (Clustering): Identify the truly unique, specific Core Medical Entities i
 - RULE A: Medical specialties (Dermatology, Surgery, etc.) are NOT entities.
 - RULE B: Structural similarities ("Management of X" vs "Management of Y") where X ≠ Y must NOT be merged.
 - RULE C: Clinically related but distinct diseases ("Vitiligo" ≠ "Melasma") must NOT be merged.
-- RULE D: IDENTICAL OR NEAR-IDENTICAL DUPLICATES MUST BE MERGED. Merge questions that describe the SAME medical entity even if they have different casing (e.g., "ECMO" vs "ecmo"), different punctuation ("X." vs "X"), or minor spacing differences. Be aggressive in merging identical topics.
+- RULE D: MANDATORY IDENTICAL MERGES. If two or more questions in the group have 100% identical text (ignoring minor casing, punctuation, or leading bullets), they MUST be merged into a single bucket. This is mandatory even if they come from different years or sources. Be aggressive in merging identical topics.
 STEP 2 (Assignment): Map every single index (0 to N-1) to exactly ONE of those entity buckets, regardless of the order they appear in the input array.
 
 ═══════════════════════════════════════════════════════════
@@ -739,7 +739,9 @@ For buckets containing 2 or more indices (MERGING IS OCCURRING):
 - THE GENERAL + SPECIFIC RULE: If your bucket contains a broad, isolated question about the entity itself (e.g., "Sezary syndrome") AND specific sub-aspect questions (e.g., "Treatment of Sezary syndrome"), your merged sentence MUST explicitly request a definition or general discussion of the entity before attaching the specific sub-aspects. 
   * Correct Output: "Write a detailed note on Sezary syndrome, including its clinical features and treatment." 
   * Incorrect Output: "Discuss the clinical features and treatment of Sezary syndrome." (This ignores the general isolated question).
-- Frame the synthesis professionally (e.g., "Discuss the...", "Evaluate the...", "Outline the...").
+- THE MINIMALIST EXCEPTION: If all items belonging to a bucket are 100% identical (e.g., "Home Sleep Testing" + "home sleep testing"), you MUST return the original text as-is. You are FORBIDDEN from adding "Discuss the...", "Outline the...", or any professional synthesis for identical merges. Only use synthesis phrasing if you are combining truly different medical sub-aspects.
+- Frame the synthesis professionally (e.g., "Discuss the...", "Evaluate the...", "Outline the...") ONLY when actual clinical synthesis is required.
+
 For buckets containing only 1 index (NO MERGING OCCURRING):
 - Clean minimally (remove leading "a)", "b)", "1.") but keep the core text identical. DO NOT add "Discuss the..." if it wasn't there originally.
 
