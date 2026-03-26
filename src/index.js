@@ -763,6 +763,16 @@ CRITICAL REMINDER 2: The sum length of all mergedIndices arrays across a subgrou
 CRITICAL REMINDER 3: If mergedIndices has length 1 (e.g. [0]), the status MUST be "Unmerged". You can ONLY use "Merged" for 2 or more indices.
 CRITICAL REMINDER 4: subGroup must be null (not "A") when this group produces exactly ONE output row.`;
 
+const MANUAL_MERGE_PROMPT = `You are an expert medical editor working on an Indian medical university exam question bank. 
+You will receive a JSON array of medical exam questions that all relate to the exact same clinical entity. 
+Your ONLY job is to synthesize these questions into ONE single, well-formulated, comprehensive medical exam question that covers all the aspects mentioned in the array.
+
+RULES:
+1. THE GENERAL + SPECIFIC RULE: If the list contains a broad, isolated question about the entity itself (e.g., "Sezary syndrome") AND specific sub-aspect questions (e.g., "Treatment of Sezary syndrome"), your merged sentence MUST explicitly request a definition or general note on the entity before attaching the specific sub-aspects. 
+   - Correct Output: "Write a detailed note on Sezary syndrome, including its clinical features and treatment." 
+2. STRICT SYNTHESIS: Only use professional synthesis (e.g., "Discuss the clinical features and treatment of...") to combine the sub-aspects smoothly.
+3. NO META-COMMENTARY. Return ONLY the final synthesized question text as a plain string. Do NOT return JSON. Do NOT use markdown. Just the raw text.`;
+
 // ══ AI Repeat Sorter Endpoint ══════════════════════════════════════════════
 // Accepts ONE batch of groups per call (frontend handles iteration + progress)
 app.post('/api/ai-sorter', async (c) => {
@@ -818,6 +828,39 @@ app.post('/api/ai-sorter', async (c) => {
         });
     } catch (error) {
         console.error('AI Sorter error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// ══ HITL Manual Sorter Merge Endpoint ══════════════════════════════════════
+// Accepts an array of question strings to synthesize into one
+app.post('/api/manual-sorter-merge', async (c) => {
+    try {
+        const { questions } = await c.req.json();
+        if (!Array.isArray(questions) || questions.length === 0) {
+            return c.json({ error: 'questions array is required' }, 400);
+        }
+
+        const messages = [{ role: 'user', content: JSON.stringify(questions) }];
+        
+        const aiRes = await chatWithGemini(messages, [], MANUAL_MERGE_PROMPT, c.env);
+        const resultText = aiRes.reply.replace(/```json|```/g, '').trim();
+
+        // Log usage conceptually (1 group)
+        c.executionCtx.waitUntil(
+            logUsage(c.env, c, 'MANUAL_SORTER', {
+                input: aiRes.usage.input_tokens,
+                output: aiRes.usage.output_tokens,
+                total: aiRes.usage.total_tokens
+            }, 1)
+        );
+
+        return c.json({
+            mergedQuestion: resultText,
+            usage: aiRes.usage
+        });
+    } catch (error) {
+        console.error('Manual Sorter Merge error:', error);
         return c.json({ error: error.message }, 500);
     }
 });
