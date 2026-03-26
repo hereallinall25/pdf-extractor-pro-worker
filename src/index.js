@@ -711,36 +711,42 @@ EVERY SINGLE INDEX must appear in your output EXACTLY ONCE.
 Validate your work logically: Do the 'mergedIndices' arrays across all your output objects collectively contain every integer from 0 to N-1 exactly once?
 
 ═══════════════════════════════════════════════════════════
-PRINCIPLE 2: THE TWO-STEP BUCKET METHOD (Global Clustering)
+PRINCIPLE 2: THE "SUBJECT VS ACTION" RULE (Universal Entity Isolation)
 ═══════════════════════════════════════════════════════════
-Do not just compare adjacent questions sequentially. Look at the ENTIRE group first.
-STEP 1 (Clustering): Identify the truly unique, specific Core Medical Entities in the group (e.g., "Vitiligo", "Psoriasis", "Crush Syndrome"). 
-- RULE A: Medical specialties (Dermatology, Surgery, etc.) are NOT entities.
-- RULE B: Structural similarities ("Management of X" vs "Management of Y") where X ≠ Y must NOT be merged.
-- RULE C: Clinically related but distinct diseases ("Vitiligo" ≠ "Melasma") must NOT be merged.
-- RULE D: MANDATORY IDENTICAL MERGES. If two or more questions in the group have 100% identical text (ignoring minor casing, punctuation, or leading bullets), they MUST be merged into a single bucket. This is mandatory even if they come from different years or sources. Be aggressive in merging identical topics.
-STEP 2 (Assignment): Map every single index (0 to N-1) to exactly ONE of those entity buckets, regardless of the order they appear in the input array.
+STEP 1: Identify the CORE SUBJECT (the Primary Noun/Entity) of each question.
+STEP 2: Map every single index (0 to N-1) to exactly ONE entity bucket.
+
+- RULE A: ACTIONS ARE NOT SUBJECTS. Words like "Anatomy," "Management," "Classification," "Histology," "Complications," "Indications," "Types of," "Discuss," or "Describe" are ACTIONS. NEVER merge questions just because they share the same action word. The Subject is the specific bone, drug, disease, test, or procedure being studied.
+- RULE B: SUBJECT DISPARITY IS A HARD STOP. If the primary subjects are different, you MUST NOT merge them, even if the action word is identical.
+    * Disease examples (MANDATORY SEPARATION): "Management of COPD" ≠ "Management of Shock" ≠ "Management of Asthma"
+    * Anatomy examples: "Anatomy of Femur" ≠ "Anatomy of Tibia"
+    * Drug examples: "Adverse effects of Rifampicin" ≠ "Adverse effects of Bedaquiline"
+    * Test examples: "Bronchoprovocation test" ≠ "Chi-square test" ≠ "PET scan" ≠ "Spirometry"
+- RULE C: CLINICALLY RELATED BUT DISTINCT ENTITIES MUST NOT BE MERGED. (e.g. "Vitiligo" ≠ "Melasma", "COPD" ≠ "Pulmonary Fibrosis")
+- RULE D: MANDATORY IDENTICAL MERGES. If two or more questions have 100% identical text (ignoring minor casing, punctuation, or leading bullets), they MUST be merged into a single bucket. This is mandatory even if they come from different years or sources.
 
 ═══════════════════════════════════════════════════════════
-PRINCIPLE 3: DEMOGRAPHIC HARD STOP BOUNDARIES
+PRINCIPLE 3: SPECIFIC CLINICAL HARD STOP BOUNDARIES
 ═══════════════════════════════════════════════════════════
-NEVER merge questions if they differ in fundamental clinical modifiers, because the clinical answer/management changes completely.
-HARD STOPS (Must remain UNMERGED from each other into SEPARATE buckets):
-- Age disparities: Adult vs. Pediatric / Neonatal vs. Elderly. (e.g., "Adult Polycystic Kidney Disease" ≠ "Infantile Polycystic Kidney Disease").
-- Sex disparities: Male vs. Female. (e.g., "Male Genital Discharge" ≠ "Female Vaginal Discharge").
-- Chronicity: Acute vs. Chronic.
-- Topography: Right vs. Left / Upper vs. Lower (if clinically distinct).
+NEVER merge across these boundaries. Each represents a unique, standalone exam topic:
+
+1. INVESTIGATION/TEST DISPARITY: Each named test is its own entity — whether it is a statistical test (Chi-square, Student's t-test, ANOVA), a clinical test (Bronchoprovocation, Mantoux), a lung function test (Spirometry, Peak Flow), or an imaging test (PET scan, CT, MRI, Bronchoscopy). NEVER group different tests together.
+2. DRUG ISOLATION: Each named drug or pharmacological agent is a separate entity. Do NOT merge different drugs into a "Thematic Superset" like "TB Drugs" or "COPD Inhalers." If you have 5 different drugs, you MUST produce 5 separate rows.
+3. TOPIC/DISEASE DISPARITY: Different named diseases, conditions, syndromes, or procedures are separate entities. Sharing a classification or management action word is NOT a reason to merge.
+4. AGE DISPARITY: Adult vs. Pediatric / Neonatal vs. Elderly. (e.g., "Adult PKLD" ≠ "Infantile PKLD")
+5. SEX DISPARITY: Male vs. Female. (e.g., "Male Genital Discharge" ≠ "Female Vaginal Discharge")
+6. CHRONICITY: Acute vs. Chronic. (e.g., "Acute Pneumonia" ≠ "Chronic Pneumonia")
 
 ═══════════════════════════════════════════════════════════
-PRINCIPLE 4: SUPERSET SYNTHESIS (Intelligent Rewriting)
+PRINCIPLE 4: SUPERSET SYNTHESIS & THE MINIMALIST EXCEPTION
 ═══════════════════════════════════════════════════════════
 For buckets containing 2 or more indices (MERGING IS OCCURRING):
-- Do NOT lazily concatenate strings with semicolons. Rewrite them from scratch into a cohesive "Superset" question.
+- ANTI-THEMATIC WARNING: Do NOT create "Thematic Supersets." If you have questions about 5 different drugs, keep 5 rows. Do NOT consolidate.
+- THE MINIMALIST EXCEPTION: If all items belonging to a bucket are 100% identical (e.g., "Home Sleep Testing" + "home sleep testing"), you MUST return the original text as-is. You are FORBIDDEN from adding "Discuss the...", "Outline the...", or any professional synthesis for identical merges.
+- STRICT SYNTHESIS: Only use professional synthesis (e.g., "Discuss the clinical features and treatment of...") if you are merging different sub-aspects of the EXACT SAME medical entity.
 - THE GENERAL + SPECIFIC RULE: If your bucket contains a broad, isolated question about the entity itself (e.g., "Sezary syndrome") AND specific sub-aspect questions (e.g., "Treatment of Sezary syndrome"), your merged sentence MUST explicitly request a definition or general discussion of the entity before attaching the specific sub-aspects. 
   * Correct Output: "Write a detailed note on Sezary syndrome, including its clinical features and treatment." 
   * Incorrect Output: "Discuss the clinical features and treatment of Sezary syndrome." (This ignores the general isolated question).
-- THE MINIMALIST EXCEPTION: If all items belonging to a bucket are 100% identical (e.g., "Home Sleep Testing" + "home sleep testing"), you MUST return the original text as-is. You are FORBIDDEN from adding "Discuss the...", "Outline the...", or any professional synthesis for identical merges. Only use synthesis phrasing if you are combining truly different medical sub-aspects.
-- Frame the synthesis professionally (e.g., "Discuss the...", "Evaluate the...", "Outline the...") ONLY when actual clinical synthesis is required.
 
 For buckets containing only 1 index (NO MERGING OCCURRING):
 - Clean minimally (remove leading "a)", "b)", "1.") but keep the core text identical. DO NOT add "Discuss the..." if it wasn't there originally.
