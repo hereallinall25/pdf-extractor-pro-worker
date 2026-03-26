@@ -432,17 +432,22 @@ CRITICAL INSTRUCTIONS:
    - NEVER "synthesize" or link two different topics (e.g., do NOT add "in children" to "Evaluation of small airways" just because the anchor mentioned children). 
    - Each sub-question ('b', 'c', etc.) should be treated as a separate standalone exam question if it contains a medical noun.
 
-3. THE TRUE DEPENDENCY RULE (When to intervene):
+3. THE SEAMLESS CLINICAL INTEGRATION RULE (When to intervene):
    You are ONLY allowed to mark a sub-question as 'Incomplete' and modify it if it is blatantly medically orphaned:
    - It contains vague pronouns or relative indicators ("it", "they", "this", "that", "above", "such", "these", "those").
    - It is a naked phrase missing a subject ("Complications.", "Clinical features.", "Investigations.", "Describe its management.").
-   ONLY in these valid orphan cases may you look at the Anchor ('a' subpart) of the same 'group_id' to extract the missing noun and append it.
+   
+   INTELLIGENT REWRITING: Do NOT blindly append the noun. Instead, SWAP the vague phrase with the actual medical subject from the Anchor ('a' subpart) of the same 'group_id'.
+   - Bad: "How would you manage such a patient with Falciparum Malaria?" (Double mention)
+   - Good: "How would you manage a patient with respiratory and non-respiratory complications of Falciparum Malaria?"
+   - Bad: "Management of such a case in ICU of Community Acquired Pneumonia" (Clunky)
+   - Good: "Management of Community Acquired Pneumonia in ICU."
 
 4. THE CLINICAL SCENARIO PROTECTION RULE:
-   If a question contains a clinical vignette/scenario (e.g., "A 20-year-old female presents with..."), you are FORBIDDEN from deleting, summarizing, or shortening the original text. You may only APPEND missing words.
+   If a question contains a clinical vignette/scenario (e.g., "A 20-year-old female presents with..."), you are FORBIDDEN from deleting, summarizing, or shortening the original text. You may only integrate missing context if the lead-in question at the end is vague.
 
 5. ANTI-HALLUCINATION PROTOCOL:
-   NEVER use brackets, placeholders (e.g. "[disease]"), or meta-commentary. If you cannot confidently determine the missing noun, fail gracefully by setting status to 'Complete' and returning the exact original text.
+   NEVER use brackets, placeholders (e.g. "[disease]"), or meta-commentary. The final 'restored_text' must read like a professionally framed medical board exam question. If you cannot confidently determine the subject, return the original text.
 
 6. Output EVERY single 'id' provided. Do not drop any items.
 Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "status": "<Complete or Incomplete>", "restored_text": "<val>"}`;
