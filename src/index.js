@@ -561,6 +561,10 @@ app.get('/api/prompts', async (c) => {
     }
 });
 
+app.get('/api/sorter-prompt', (c) => {
+    return c.json({ prompt: SORTER_PROMPT });
+});
+
 app.post('/api/prompts', async (c) => {
     try {
         const { name, university, state, type, content } = await c.req.json();
@@ -684,16 +688,8 @@ app.delete('/api/chat-prompts/:id', async (c) => {
     }
 });
 
-// ══ AI Repeat Sorter Endpoint ══════════════════════════════════════════════
-// Accepts ONE batch of groups per call (frontend handles iteration + progress)
-app.post('/api/ai-sorter', async (c) => {
-    try {
-        const { groups, logUsageOnLastBatch, totalGroupsForLog } = await c.req.json();
-        if (!Array.isArray(groups) || groups.length === 0) {
-            return c.json({ error: 'groups array is required' }, 400);
-        }
-
-        const SORTER_PROMPT = `You are a precise medical exam question merger AI working on Indian medical university exam question banks.
+// ══ AI Repeat Sorter — System Prompt (module scope for dynamic API access) ══
+const SORTER_PROMPT = `You are a precise medical exam question merger AI working on Indian medical university exam question banks.
 
 You receive a JSON array. Each element has:
 - "groupId": group ID (e.g. "G1")
@@ -767,7 +763,14 @@ CRITICAL REMINDER 2: The sum length of all mergedIndices arrays across a subgrou
 CRITICAL REMINDER 3: If mergedIndices has length 1 (e.g. [0]), the status MUST be "Unmerged". You can ONLY use "Merged" for 2 or more indices.
 CRITICAL REMINDER 4: subGroup must be null (not "A") when this group produces exactly ONE output row.`;
 
-
+// ══ AI Repeat Sorter Endpoint ══════════════════════════════════════════════
+// Accepts ONE batch of groups per call (frontend handles iteration + progress)
+app.post('/api/ai-sorter', async (c) => {
+    try {
+        const { groups, logUsageOnLastBatch, totalGroupsForLog } = await c.req.json();
+        if (!Array.isArray(groups) || groups.length === 0) {
+            return c.json({ error: 'groups array is required' }, 400);
+        }
 
         const messages = [{ role: 'user', content: JSON.stringify(groups) }];
         let results = [];
