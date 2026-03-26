@@ -425,15 +425,16 @@ CRITICAL INSTRUCTIONS:
    Anchors ONLY provide context; they NEVER receive context. 
    For ALL Anchors: You MUST set status to 'Complete' and return the EXACT ORIGINAL 'q_text' unmodified. Zero exceptions.
 
-2. THE STANDALONE CONCEPT RULE ("Do No Harm"):
-   Scan 'b', 'c', or 'd' subparts for a primary medical entity.
-   If the sub-question already contains its own distinct medical disease, condition, anatomical structure, or specific procedure (e.g., "Mycetoma", "Adaptive immunity", "Meta-analysis", "Child sexual abuse"), do NOT touch it! 
-   If it already stands on its own medically, set status to 'Complete' and return the EXACT ORIGINAL 'q_text'. Do not fuse distinct concepts together.
+2. THE STANDALONE CONCEPT RULE ("Audit-First"):
+   Before attempting to restore, check if the question already contains its own distinct medical disease, condition, anatomical structure, or specific procedure.
+   - If a question is medically complete (e.g., "Excessive day sleepiness", "Mycetoma", "Adaptive immunity"), do NOT touch it! 
+   - If it stands on its own, set status to 'Complete' and return the EXACT ORIGINAL 'q_text'.
+   - NEVER inject 'a' subpart context into a 'b' subpart if 'b' is already a valid standalone medical question.
 
 3. THE TRUE DEPENDENCY RULE (When to intervene):
    You are ONLY allowed to mark a sub-question as 'Incomplete' and modify it if it is blatantly medically orphaned:
-   - It contains vague pronouns ("Their role in thermoregulation", "Management of it").
-   - It is a naked phrase missing a subject ("Complications.", "Clinical features.", "Investigations.").
+   - It contains vague pronouns or relative indicators ("it", "they", "this", "that", "above", "such", "these", "those").
+   - It is a naked phrase missing a subject ("Complications.", "Clinical features.", "Investigations.", "Describe its management.").
    ONLY in these valid orphan cases may you look at the Anchor ('a' subpart) of the same 'group_id' to extract the missing noun and append it.
 
 4. THE CLINICAL SCENARIO PROTECTION RULE:
@@ -711,7 +712,7 @@ STEP 1 (Clustering): Identify the truly unique, specific Core Medical Entities i
 - RULE A: Medical specialties (Dermatology, Surgery, etc.) are NOT entities.
 - RULE B: Structural similarities ("Management of X" vs "Management of Y") where X ≠ Y must NOT be merged.
 - RULE C: Clinically related but distinct diseases ("Vitiligo" ≠ "Melasma") must NOT be merged.
-- RULE D: IDENTICAL OR NEAR-IDENTICAL DUPLICATES MUST BE MERGED. This includes questions that describe the exact same medical entity even if they have different casing (e.g., "ECMO" vs "ecmo"), different punctuation, or minor spacing differences. If it represents the same clinical topic, merge it.
+- RULE D: IDENTICAL OR NEAR-IDENTICAL DUPLICATES MUST BE MERGED. Merge questions that describe the SAME medical entity even if they have different casing (e.g., "ECMO" vs "ecmo"), different punctuation ("X." vs "X"), or minor spacing differences. Be aggressive in merging identical topics.
 STEP 2 (Assignment): Map every single index (0 to N-1) to exactly ONE of those entity buckets, regardless of the order they appear in the input array.
 
 ═══════════════════════════════════════════════════════════
