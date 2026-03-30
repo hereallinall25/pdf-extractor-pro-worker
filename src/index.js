@@ -580,6 +580,33 @@ app.post('/api/prompts', async (c) => {
     }
 });
 
+app.get('/api/manual-sorter-prompt', async (c) => {
+    try {
+        const result = await c.env.DB.prepare("SELECT content FROM prompts WHERE type = 'manual_sorter' ORDER BY created_at DESC LIMIT 1").first();
+        return c.json({ prompt: result?.content || MANUAL_MERGE_PROMPT });
+    } catch (error) {
+        console.error('Fetch manual prompt error:', error);
+        return c.json({ prompt: MANUAL_MERGE_PROMPT });
+    }
+});
+
+app.post('/api/manual-sorter-prompt', async (c) => {
+    try {
+        const { content } = await c.req.json();
+        const existing = await c.env.DB.prepare("SELECT id FROM prompts WHERE type = 'manual_sorter' ORDER BY created_at DESC LIMIT 1").first();
+        
+        if (existing) {
+            await c.env.DB.prepare("UPDATE prompts SET content = ? WHERE id = ?").bind(content, existing.id).run();
+        } else {
+            await c.env.DB.prepare("INSERT INTO prompts (name, type, content) VALUES (?, ?, ?)").bind("Manual Sorter Prompt", "manual_sorter", content).run();
+        }
+        return c.json({ success: true });
+    } catch (error) {
+        console.error('Update manual prompt error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
 app.put('/api/prompts/:id', async (c) => {
     try {
         const id = c.req.param('id');
@@ -841,26 +868,51 @@ app.post('/api/manual-sorter-merge', async (c) => {
             return c.json({ error: 'questions array is required' }, 400);
         }
 
+        let activePrompt = MANUAL_MERGE_PROMPT;
+        try {
+            const dbPrompt = await c.env.DB.prepare("SELECT content FROM prompts WHERE type = 'manual_sorter' ORDER BY created_at DESC LIMIT 1").first();
+            if (dbPrompt && dbPrompt.content) {
+                activePrompt = dbPrompt.content;
+            }
+        } catch (e) { console.error("Could not fetch manual sorter prompt", e); }
+
         const messages = [{ role: 'user', content: JSON.stringify(questions) }];
         
-        const aiRes = await chatWithGemini(messages, [], MANUAL_MERGE_PROMPT, c.env);
+        const aiRes = await chatWithGemini(messages, [], activePrompt, c.env);
         const resultText = aiRes.reply.replace(/```json|```/g, '').trim();
 
-        // Log usage conceptually (1 group)
-        c.executionCtx.waitUntil(
-            logUsage(c.env, c, 'MANUAL_SORTER', {
-                input: aiRes.usage.input_tokens,
-                output: aiRes.usage.output_tokens,
-                total: aiRes.usage.total_tokens
-            }, 1)
-        );
-
+        // Send normal mapped schema to frontend
         return c.json({
             mergedQuestion: resultText,
-            usage: aiRes.usage
+            usage: {
+                input_tokens: aiRes.usage.promptTokenCount || 0,
+                output_tokens: aiRes.usage.candidatesTokenCount || 0,
+                total_tokens: aiRes.usage.totalTokenCount || 0
+            }
         });
     } catch (error) {
         console.error('Manual Sorter Merge error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+// Global Analytics Ingestion Endpoint (Aggregate Push)
+app.post('/api/analytics', async (c) => {
+    try {
+        const body = await c.req.json();
+        const { eventType, tokenInput, tokenOutput, tokenTotal, fileCount } = body;
+        
+        c.executionCtx.waitUntil(
+            logUsage(c.env, c, eventType || 'hitl_manual_session', {
+                input: tokenInput || 0,
+                output: tokenOutput || 0,
+                total: tokenTotal || ((tokenInput || 0) + (tokenOutput || 0))
+            }, fileCount || 1)
+        );
+        
+        return c.json({ success: true, message: 'Analytics recorded' });
+    } catch (error) {
+        console.error('Analytics aggregation error:', error);
         return c.json({ error: error.message }, 500);
     }
 });
