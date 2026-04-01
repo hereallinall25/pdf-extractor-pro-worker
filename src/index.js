@@ -74,6 +74,7 @@ app.post('/api/extract', async (c) => {
         const pdfFile = body.file; // Matches frontend
         const customPrompt = body.prompt;
         const temperature = body.temperature !== undefined ? parseFloat(body.temperature) : 0.0;
+        const model = body.model || 'gemini-2.5-flash-lite';
 
         if (!pdfFile || !(pdfFile instanceof File)) {
             return c.json({ error: 'No file uploaded' }, 400);
@@ -82,7 +83,7 @@ app.post('/api/extract', async (c) => {
         const arrayBuffer = await pdfFile.arrayBuffer();
         const pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
 
-        const { data, usage } = await extractFromPdf(pdfBase64, customPrompt, temperature, c.env);
+        const { data, usage } = await extractFromPdf(pdfBase64, customPrompt, temperature, c.env, model);
 
         // Log usage for analytics
         await logUsage(c.env, c, 'extraction', {
@@ -465,16 +466,7 @@ app.post('/api/restore-batch', async (c) => {
         let result = JSON.parse(aiRes.reply.replace(/```json|```/g, '').trim());
         if (!Array.isArray(result)) result = [result];
 
-        // Hardcoded failsafe: if AI returned same text, force Complete
-        result = result.map(r => {
-            const orig = batch.find(b => b.id === r.id);
-            if (orig && r.status === 'Incomplete') {
-                if (String(orig.q_text).trim().toLowerCase() === String(r.restored_text).trim().toLowerCase()) {
-                    r.status = 'Complete';
-                }
-            }
-            return r;
-        });
+        // Removed same-text failsafe to allow HITL manual review of subtle drafts
 
         return c.json({
             results: result,
@@ -637,7 +629,7 @@ app.delete('/api/prompts/:id', async (c) => {
 // AI Chat Assistant
 app.post('/api/chat', async (c) => {
     try {
-        const { messages, attachments, promptContext } = await c.req.json();
+        const { messages, attachments, promptContext, model } = await c.req.json();
 
         if (!messages || !Array.isArray(messages) || messages.length === 0) {
             return c.json({ error: 'Messages array is required' }, 400);
@@ -646,7 +638,7 @@ app.post('/api/chat', async (c) => {
         // Validate attachments (optional)
         const validAttachments = (attachments || []).filter(att => att.mimeType && att.base64);
 
-        const result = await chatWithGemini(messages, validAttachments, promptContext || '', c.env);
+        const result = await chatWithGemini(messages, validAttachments, promptContext || '', c.env, model);
 
         // Log usage for analytics
         await logUsage(c.env, c, 'chat', {
