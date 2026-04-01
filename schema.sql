@@ -36,3 +36,10 @@ CREATE TABLE IF NOT EXISTS generated_files (
   data_base64 TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Create HITL settings for Context Restorer prompts
+CREATE TABLE IF NOT EXISTS hitl_settings (
+  type TEXT PRIMARY KEY,
+  content TEXT NOT NULL,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

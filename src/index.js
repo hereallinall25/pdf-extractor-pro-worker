@@ -626,6 +626,30 @@ app.delete('/api/prompts/:id', async (c) => {
     }
 });
 
+// HITL Settings (Context Restorer)
+app.get('/api/hitl-settings', async (c) => {
+    try {
+        const { results } = await c.env.DB.prepare('SELECT * FROM hitl_settings').all();
+        return c.json(results || []);
+    } catch (error) {
+        console.error('Fetch hitl settings error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
+app.post('/api/hitl-settings', async (c) => {
+    try {
+        const { type, content } = await c.req.json();
+        await c.env.DB.prepare('INSERT INTO hitl_settings (type, content) VALUES (?, ?) ON CONFLICT(type) DO UPDATE SET content = EXCLUDED.content, updated_at = CURRENT_TIMESTAMP')
+            .bind(type, content)
+            .run();
+        return c.json({ success: true });
+    } catch (error) {
+        console.error('Update hitl settings error:', error);
+        return c.json({ error: error.message }, 500);
+    }
+});
+
 // AI Chat Assistant
 app.post('/api/chat', async (c) => {
     try {
