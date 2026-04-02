@@ -77,9 +77,16 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
                 parts: [
                     ...parts,
                     {
-                        text: "You are a highly strict data extraction assistant. Your ONLY job is to extract text exactly as it appears in the provided document.\n\n" +
+                        text: "### SYSTEM INSTRUCTIONS: STRICT OCR EXTRACTION MODE ###\n" +
+                            "You are a robotic scanning tool. Your ONLY job is to extract text exactly as it is physically printed on the page. Do NOT use your medical training to 'finish' or 'repair' questions.\n\n" +
+                            "### MISSION CRITICAL RULES ###\n" +
+                            "1. TOP-DOWN SCAN: Process the document strictly from Top-Left to Bottom-Right. Maintain the original sequence of questions. Do NOT reorder them.\n" +
+                            "2. INK-ONLY POLICY: Extract ONLY the literal ink on the page. If the PDF says something, extract it. If it doesn't, DO NOT add it. Do NOT 'help' by adding common medical questions or topics.\n" +
+                            "3. ZERO HALLUCINATION: If you add a single medical concept or question that isn't physically visible, the task is a failure. No external knowledge allowed.\n" +
+                            "4. STOP PROTOCOL: Stop generating immediately once the printed text ends. Do NOT append your own examples or meta-commentary.\n\n" +
+                            "### SPECIFIC EXTRACTION PROMPT ###\n" +
                             (customPrompt || 'Extract all relevant information from this question paper. Format the output as a JSON array of objects. For very long papers, you may use a Pipe-Separated list (PSV) with headers to stay within limits. Columns: S.No, Question, Paper, Subject, Month Year, Type, Section, University Name, CBME, Supplementary.') +
-                            '\n\nCRITICAL INSTRUCTIONS:\n1. ONLY extract information that is explicitly written in the provided document.\n2. Do NOT invent, hallucinate, guess, or add any extra questions, subjects, or data.\n3. Stop generating immediately once you reach the end of the document text. Do NOT append your own examples.'
+                            '\n\n### FINAL ENFORCEMENT ###: Output ONLY the requested data format (JSON/PSV). Zero creativity allowed.'
                     }
                 ],
             },
