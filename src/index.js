@@ -98,7 +98,8 @@ app.post('/api/extract', async (c) => {
         return c.json({
             error: 'Server Error during extraction',
             details: error.message,
-            stack: error.stack // Helpful for debugging in the browser console
+            stack: error.stack,
+            context: error.context || 'Unknown context'
         }, 500);
     }
 });

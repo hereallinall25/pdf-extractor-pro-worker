@@ -19,11 +19,25 @@ async function getAccessToken(env) {
         throw new Error('GOOGLE_APPLICATION_CREDENTIALS must contain client_email and private_key');
     }
 
-    // Fix escaped newlines if the user pasted the JSON string incorrectly
-    private_key = private_key.replace(/\\n/g, '\n');
-
-    // Sign the JWT for Google OAuth2
-    const key = await jose.importPKCS8(private_key, 'RS256');
+    // Ultimate PEM Sanitizer: Fixes weird copy-paste issues from Cloudflare Dashboard
+    private_key = private_key.replace(/\\n/g, '').replace(/\\r/g, '');
+    const pemMatch = private_key.match(/-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----/s);
+    if (pemMatch) {
+        // Remove EVERYTHING that isn't a valid base64 character from the body
+        const cleanBase64 = pemMatch[1].replace(/[^A-Za-z0-9+/=]/g, '');
+        // Reconstruct the perfect PEM
+        private_key = `-----BEGIN PRIVATE KEY-----\n${cleanBase64}\n-----END PRIVATE KEY-----`;
+    }
+    
+    let key;
+    try {
+        key = await jose.importPKCS8(private_key, 'RS256');
+    } catch (e) {
+        const err = new Error(`jose.importPKCS8 failed: ${e.message}`);
+        err.context = 'jose.importPKCS8 (Private key parsing)';
+        throw err;
+    }
+    
     const jwt = await new jose.SignJWT({
         iss: client_email,
         sub: client_email,
@@ -58,7 +72,13 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
 
     console.log(`Starting extraction using ${model} for project: ${project} in ${location}`);
 
-    const accessToken = await getAccessToken(env);
+    let accessToken;
+    try {
+        accessToken = await getAccessToken(env);
+    } catch (e) {
+        e.context = e.context || 'getAccessToken';
+        throw e;
+    }
     const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
     const parts = [];
