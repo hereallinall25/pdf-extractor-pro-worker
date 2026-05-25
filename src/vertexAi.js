@@ -14,10 +14,13 @@ async function getAccessToken(env) {
         throw new Error(`GOOGLE_APPLICATION_CREDENTIALS is not a valid JSON string. (Error: ${e.message})`);
     }
 
-    const { client_email, private_key } = credentials;
+    let { client_email, private_key } = credentials;
     if (!client_email || !private_key) {
         throw new Error('GOOGLE_APPLICATION_CREDENTIALS must contain client_email and private_key');
     }
+
+    // Fix escaped newlines if the user pasted the JSON string incorrectly
+    private_key = private_key.replace(/\\n/g, '\n');
 
     // Sign the JWT for Google OAuth2
     const key = await jose.importPKCS8(private_key, 'RS256');
