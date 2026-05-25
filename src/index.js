@@ -34,9 +34,9 @@ async function logUsage(env, c, eventType, tokens, fileCount = 0) {
     try {
         const userEmail = c.req.header('X-User-Email') || c.req.header('Cf-Access-Authenticated-User-Email') || 'anonymous@internal.com';
         await env.DB.prepare(
-            'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count) VALUES (?, ?, ?, ?, ?, ?)'
+            'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count, account_name) VALUES (?, ?, ?, ?, ?, ?, ?)'
         )
-            .bind(userEmail, eventType, tokens.input || 0, tokens.output || 0, tokens.total || 0, fileCount)
+            .bind(userEmail, eventType, tokens.input || 0, tokens.output || 0, tokens.total || 0, fileCount, 'Kumarmdkhare')
             .run();
     } catch (error) {
         console.error('Logging error:', error);
@@ -313,8 +313,8 @@ Return ONLY a valid JSON array containing EXACTLY these keys: {"id": <int>, "sta
         // Log Usage — use direct DB insert since c.req is unavailable inside SSE stream
         try {
             await c.env.DB.prepare(
-                'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count) VALUES (?, ?, ?, ?, ?, ?)'
-            ).bind(userEmail, 'excel_merger', totalInputTokens, totalOutputTokens, totalInputTokens + totalOutputTokens, 1).run();
+                'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count, account_name) VALUES (?, ?, ?, ?, ?, ?, ?)'
+            ).bind(userEmail, 'excel_merger', totalInputTokens, totalOutputTokens, totalInputTokens + totalOutputTokens, 1, 'Kumarmdkhare').run();
         } catch (logErr) {
             console.error('Usage log error (excel_merger):', logErr);
         }
@@ -936,9 +936,16 @@ app.post('/api/analytics', async (c) => {
 // Admin Analytics Endpoint (upgraded with per-feature breakdown + cost)
 app.get('/api/admin/analytics', async (c) => {
     try {
+        const reqAccount = c.req.query('account') || 'Kumarmdkhare';
         const reqUserEmail = c.req.query('userEmail');
-        const userFilterClause = reqUserEmail ? "AND user_email = ?" : "";
-        const userParams = reqUserEmail ? [reqUserEmail] : [];
+        
+        let filterClause = "AND account_name = ?";
+        let params = [reqAccount];
+        
+        if (reqUserEmail) {
+            filterClause += " AND user_email = ?";
+            params.push(reqUserEmail);
+        }
 
         // All unique users
         const allUsers = await c.env.DB.prepare(
@@ -956,10 +963,10 @@ app.get('/api/admin/analytics', async (c) => {
                 SUM(token_total) as total_tokens,
                 MAX(DATETIME(created_at, '+5 hours', '+30 minutes')) as last_used
             FROM usage_logs
-            WHERE 1=1 ${userFilterClause}
+            WHERE 1=1 ${filterClause}
             GROUP BY user_email, event_type
             ORDER BY user_email, total_tokens DESC
-        `).bind(...userParams).all();
+        `).bind(...params).all();
 
         // Daily totals (last 30 days, IST)
         const dailyTotals = await c.env.DB.prepare(`
@@ -974,11 +981,11 @@ app.get('/api/admin/analytics', async (c) => {
                 COUNT(CASE WHEN event_type = 'chat' THEN 1 END) as chats,
                 COUNT(DISTINCT user_email) as active_users
             FROM usage_logs
-            WHERE 1=1 ${userFilterClause}
+            WHERE 1=1 ${filterClause}
             GROUP BY DATE(created_at, '+5 hours', '+30 minutes')
             ORDER BY DATE(created_at, '+5 hours', '+30 minutes') DESC
             LIMIT 30
-        `).bind(...userParams).all();
+        `).bind(...params).all();
 
         // Today's user breakdown (IST)
         const userBreakdown = await c.env.DB.prepare(`
@@ -991,10 +998,10 @@ app.get('/api/admin/analytics', async (c) => {
                 MAX(DATETIME(created_at, '+5 hours', '+30 minutes')) as last_active
             FROM usage_logs
             WHERE DATE(created_at, '+5 hours', '+30 minutes') = DATE('now', '+5 hours', '+30 minutes')
-            ${userFilterClause}
+            ${filterClause}
             GROUP BY user_email
             ORDER BY total_tokens DESC
-        `).bind(...userParams).all();
+        `).bind(...params).all();
 
         // Recent activity
         const recentActivity = await c.env.DB.prepare(`
@@ -1008,10 +1015,10 @@ app.get('/api/admin/analytics', async (c) => {
                 file_count,
                 DATETIME(created_at, '+5 hours', '+30 minutes') as created_at
             FROM usage_logs
-            WHERE 1=1 ${userFilterClause}
+            WHERE 1=1 ${filterClause}
             ORDER BY id DESC
             LIMIT 30
-        `).bind(...userParams).all();
+        `).bind(...params).all();
 
         // All-time totals per feature (for summary cards)
         const featureTotals = await c.env.DB.prepare(`
@@ -1022,9 +1029,9 @@ app.get('/api/admin/analytics', async (c) => {
                 SUM(token_output) as total_output,
                 SUM(token_total) as total_tokens
             FROM usage_logs
-            WHERE 1=1 ${userFilterClause}
+            WHERE 1=1 ${filterClause}
             GROUP BY event_type
-        `).bind(...userParams).all();
+        `).bind(...params).all();
 
         return c.json({
             allUsers: allUsers.results ? allUsers.results.map(r => r.user_email) : [],

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS usage_logs (
   token_output INTEGER DEFAULT 0,
   token_total INTEGER DEFAULT 0,
   file_count INTEGER DEFAULT 0,
+  account_name TEXT DEFAULT 'All in All',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
