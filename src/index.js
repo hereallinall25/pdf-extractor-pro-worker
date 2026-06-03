@@ -95,12 +95,13 @@ app.post('/api/extract', async (c) => {
         return c.json({ data, usage });
     } catch (error) {
         console.error('Extraction error:', error);
+        const isQuotaError = error.message && (error.message.includes('429') || error.message.includes('Resource exhausted'));
         return c.json({
-            error: 'Server Error during extraction',
+            error: isQuotaError ? 'Quota Exhausted' : 'Server Error during extraction',
             details: error.message,
             stack: error.stack,
             context: error.context || 'Unknown context'
-        }, 500);
+        }, isQuotaError ? 429 : 500);
     }
 });
 
