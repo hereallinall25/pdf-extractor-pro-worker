@@ -66,6 +66,16 @@ async function getAccessToken(env) {
     return data.access_token;
 }
 
+function getVertexEndpoint(location) {
+    if (location === 'global') {
+        return 'https://aiplatform.googleapis.com';
+    }
+    if (location === 'us' || location === 'eu') {
+        return `https://aiplatform.${location}.rep.googleapis.com`;
+    }
+    return `https://${location}-aiplatform.googleapis.com`;
+}
+
 export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, model = 'gemini-2.5-flash-lite') {
     let project = env.GOOGLE_CLOUD_PROJECT;
     if (!project && env.GOOGLE_APPLICATION_CREDENTIALS) {
@@ -77,7 +87,7 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
         }
     }
     project = project || 'vertex-pdf-ex';
-    let location = env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+    let location = env.GOOGLE_CLOUD_LOCATION || 'us';
 
     console.log(`Starting extraction using ${model} for project: ${project} in ${location}`);
 
@@ -88,7 +98,8 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
         e.context = e.context || 'getAccessToken';
         throw e;
     }
-    const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google/models/${model}:generateContent`;
+    const endpoint = getVertexEndpoint(location);
+    const url = `${endpoint}/v1/projects/${project}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
     const parts = [];
     if (pdfBase64) {
@@ -184,10 +195,11 @@ export async function chatWithGemini(messages, attachments, promptContext, env, 
         }
     }
     project = project || 'vertex-pdf-ex';
-    let location = env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+    let location = env.GOOGLE_CLOUD_LOCATION || 'us';
 
     const accessToken = await getAccessToken(env);
-    const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google/models/${model}:generateContent`;
+    const endpoint = getVertexEndpoint(location);
+    const url = `${endpoint}/v1/projects/${project}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
     // Build the contents array for multi-turn conversation
     const contents = [];
