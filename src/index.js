@@ -69,6 +69,18 @@ app.get('/api/test-vertex', async (c) => {
 
 // Extract PDF Data
 app.post('/api/extract', async (c) => {
+    let project = c.env.GOOGLE_CLOUD_PROJECT;
+    let location = c.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+    if (!project && c.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        try {
+            const credentials = JSON.parse(c.env.GOOGLE_APPLICATION_CREDENTIALS);
+            project = credentials.project_id;
+        } catch (e) {
+            console.error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS for project_id:', e);
+        }
+    }
+    project = project || 'vertex-pdf-ex';
+
     try {
         const body = await c.req.parseBody();
         const pdfFile = body.file; // Matches frontend
@@ -100,7 +112,11 @@ app.post('/api/extract', async (c) => {
             error: isQuotaError ? 'Quota Exhausted' : 'Server Error during extraction',
             details: error.message,
             stack: error.stack,
-            context: error.context || 'Unknown context'
+            context: error.context || 'Unknown context',
+            debug: {
+                project,
+                location
+            }
         }, isQuotaError ? 429 : 500);
     }
 });
