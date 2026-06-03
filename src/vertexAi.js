@@ -67,7 +67,16 @@ async function getAccessToken(env) {
 }
 
 export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, model = 'gemini-2.5-flash-lite') {
-    const project = env.GOOGLE_CLOUD_PROJECT || 'vertex-pdf-ex';
+    let project = env.GOOGLE_CLOUD_PROJECT;
+    if (!project && env.GOOGLE_APPLICATION_CREDENTIALS) {
+        try {
+            const credentials = JSON.parse(env.GOOGLE_APPLICATION_CREDENTIALS);
+            project = credentials.project_id;
+        } catch (e) {
+            console.error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS for project_id:', e);
+        }
+    }
+    project = project || 'vertex-pdf-ex';
     let location = env.GOOGLE_CLOUD_LOCATION || 'us-central1';
 
     console.log(`Starting extraction using ${model} for project: ${project} in ${location}`);
@@ -165,7 +174,16 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
  * @param {object} env - Cloudflare environment bindings
  */
 export async function chatWithGemini(messages, attachments, promptContext, env, model = 'gemini-2.5-flash-lite') {
-    const project = env.GOOGLE_CLOUD_PROJECT || 'vertex-pdf-ex';
+    let project = env.GOOGLE_CLOUD_PROJECT;
+    if (!project && env.GOOGLE_APPLICATION_CREDENTIALS) {
+        try {
+            const credentials = JSON.parse(env.GOOGLE_APPLICATION_CREDENTIALS);
+            project = credentials.project_id;
+        } catch (e) {
+            console.error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS for project_id:', e);
+        }
+    }
+    project = project || 'vertex-pdf-ex';
     let location = env.GOOGLE_CLOUD_LOCATION || 'us-central1';
 
     const accessToken = await getAccessToken(env);
