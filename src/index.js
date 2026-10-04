@@ -29,14 +29,35 @@ app.onError((err, c) => {
     }, 500, Object.fromEntries(headers));
 });
 
+// Helper to extract active GCP Project and Service Account info from env
+function getGcpInfo(env) {
+    let projectId = env.GOOGLE_CLOUD_PROJECT;
+    let clientEmail = 'unknown@serviceaccount.com';
+    let location = env.GOOGLE_CLOUD_LOCATION || 'us';
+
+    if (env.GOOGLE_APPLICATION_CREDENTIALS) {
+        try {
+            const credentials = JSON.parse(env.GOOGLE_APPLICATION_CREDENTIALS);
+            if (credentials.project_id) projectId = credentials.project_id;
+            if (credentials.client_email) clientEmail = credentials.client_email;
+        } catch (e) {
+            console.error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS for GCP info:', e);
+        }
+    }
+    projectId = projectId || 'vertex-pdf-ex';
+
+    return { projectId, clientEmail, location };
+}
+
 // Helper to get user email and log usage
 async function logUsage(env, c, eventType, tokens, fileCount = 0) {
     try {
         const userEmail = c.req.header('X-User-Email') || c.req.header('Cf-Access-Authenticated-User-Email') || 'anonymous@internal.com';
+        const { projectId } = getGcpInfo(env);
         await env.DB.prepare(
             'INSERT INTO usage_logs (user_email, event_type, token_input, token_output, token_total, file_count, account_name) VALUES (?, ?, ?, ?, ?, ?, ?)'
         )
-            .bind(userEmail, eventType, tokens.input || 0, tokens.output || 0, tokens.total || 0, fileCount, 'Kumarmdkhare')
+            .bind(userEmail, eventType, tokens.input || 0, tokens.output || 0, tokens.total || 0, fileCount, projectId)
             .run();
     } catch (error) {
         console.error('Logging error:', error);
@@ -45,6 +66,11 @@ async function logUsage(env, c, eventType, tokens, fileCount = 0) {
 
 app.get('/', (c) => {
     return c.json({ status: 'API is running', version: '2.0.1 (Cloudflare Native)' });
+});
+
+// Endpoint to expose currently connected GCP Project and Service Account
+app.get('/api/gcp-info', (c) => {
+    return c.json(getGcpInfo(c.env));
 });
 
 // Test Endpoint for Vertex AI
@@ -954,16 +980,26 @@ app.post('/api/analytics', async (c) => {
 // Admin Analytics Endpoint (upgraded with per-feature breakdown + cost)
 app.get('/api/admin/analytics', async (c) => {
     try {
-        const reqAccount = c.req.query('account') || 'Kumarmdkhare';
+        const reqAccount = c.req.query('account');
         const reqUserEmail = c.req.query('userEmail');
         
-        let filterClause = "AND account_name = ?";
-        let params = [reqAccount];
+        let filterClause = "";
+        let params = [];
+        
+        if (reqAccount && reqAccount !== 'ALL') {
+            filterClause += " AND account_name = ?";
+            params.push(reqAccount);
+        }
         
         if (reqUserEmail) {
             filterClause += " AND user_email = ?";
             params.push(reqUserEmail);
         }
+
+        // All unique accounts / projects
+        const allAccounts = await c.env.DB.prepare(
+            'SELECT DISTINCT account_name FROM usage_logs WHERE account_name IS NOT NULL ORDER BY account_name ASC'
+        ).all();
 
         // All unique users
         const allUsers = await c.env.DB.prepare(
@@ -1031,6 +1067,7 @@ app.get('/api/admin/analytics', async (c) => {
                 token_output,
                 token_total,
                 file_count,
+                account_name,
                 DATETIME(created_at, '+5 hours', '+30 minutes') as created_at
             FROM usage_logs
             WHERE 1=1 ${filterClause}
@@ -1052,6 +1089,8 @@ app.get('/api/admin/analytics', async (c) => {
         `).bind(...params).all();
 
         return c.json({
+            allAccounts: allAccounts.results ? allAccounts.results.map(r => r.account_name).filter(Boolean) : [],
+            activeProject: getGcpInfo(c.env),
             allUsers: allUsers.results ? allUsers.results.map(r => r.user_email) : [],
             perUserFeature: perUserFeature.results || [],
             dailyTotals: dailyTotals.results || [],
