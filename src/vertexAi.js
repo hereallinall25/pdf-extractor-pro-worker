@@ -67,11 +67,8 @@ async function getAccessToken(env) {
 }
 
 function getVertexEndpoint(location) {
-    if (location === 'global') {
+    if (location === 'global' || location === 'us' || location === 'eu') {
         return 'https://aiplatform.googleapis.com';
-    }
-    if (location === 'us' || location === 'eu') {
-        return `https://aiplatform.${location}.rep.googleapis.com`;
     }
     return `https://${location}-aiplatform.googleapis.com`;
 }
