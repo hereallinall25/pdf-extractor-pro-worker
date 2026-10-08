@@ -109,19 +109,32 @@ app.post('/api/extract', async (c) => {
 
     try {
         const body = await c.req.parseBody();
-        const pdfFile = body.file; // Matches frontend
+        const uploadedFile = body.file; // Matches frontend for PDF / binary
+        const documentText = body.documentText; // Extracted text for DOCX
+        const fileType = body.fileType || (uploadedFile?.name?.toLowerCase().endsWith('.docx') ? 'docx' : 'pdf');
         const customPrompt = body.prompt;
         const temperature = body.temperature !== undefined ? parseFloat(body.temperature) : 0.0;
         const model = body.model || 'gemini-2.5-flash-lite';
 
-        if (!pdfFile || !(pdfFile instanceof File)) {
-            return c.json({ error: 'No file uploaded' }, 400);
+        if (!uploadedFile && !documentText) {
+            return c.json({ error: 'No file or document text uploaded' }, 400);
         }
 
-        const arrayBuffer = await pdfFile.arrayBuffer();
-        const pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
+        let pdfBase64 = null;
+        if (uploadedFile && uploadedFile instanceof File) {
+            const arrayBuffer = await uploadedFile.arrayBuffer();
+            pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
+        }
 
-        const { data, usage } = await extractFromPdf(pdfBase64, customPrompt, temperature, c.env, model);
+        const { data, usage } = await extractFromPdf(
+            pdfBase64,
+            customPrompt,
+            temperature,
+            c.env,
+            model,
+            documentText,
+            fileType
+        );
 
         // Log usage for analytics
         await logUsage(c.env, c, 'extraction', {

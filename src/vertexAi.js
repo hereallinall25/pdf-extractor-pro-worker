@@ -73,7 +73,7 @@ function getVertexEndpoint(location) {
     return `https://${location}-aiplatform.googleapis.com`;
 }
 
-export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, model = 'gemini-2.5-flash-lite') {
+export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, model = 'gemini-2.5-flash-lite', documentText = null, fileType = 'pdf') {
     let project = env.GOOGLE_CLOUD_PROJECT;
     if (!project && env.GOOGLE_APPLICATION_CREDENTIALS) {
         try {
@@ -86,7 +86,7 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
     project = project || 'vertex-pdf-ex';
     let location = env.GOOGLE_CLOUD_LOCATION || 'us';
 
-    console.log(`Starting extraction using ${model} for project: ${project} in ${location}`);
+    console.log(`Starting extraction using ${model} for project: ${project} in ${location} (${fileType})`);
 
     let accessToken;
     try {
@@ -106,7 +106,12 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
                 data: pdfBase64,
             },
         });
+    } else if (documentText) {
+        parts.push({
+            text: `### ORIGINAL DOCUMENT CONTENT (${fileType.toUpperCase()}): ###\n\n${documentText}\n\n### END ORIGINAL DOCUMENT CONTENT ###`
+        });
     }
+
     let requestBody = {
         contents: [
             {
@@ -114,13 +119,13 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
                 parts: [
                     ...parts,
                     {
-                        text: "### SYSTEM INSTRUCTIONS: STRICT OCR EXTRACTION MODE ###\n" +
-                            "You are a robotic scanning tool. Your ONLY job is to extract text exactly as it is physically printed on the page. Do NOT use your medical training to 'finish' or 'repair' questions.\n\n" +
+                        text: "### SYSTEM INSTRUCTIONS: STRICT DOCUMENT EXTRACTION MODE ###\n" +
+                            "You are a robotic scanning and extraction tool. Your ONLY job is to extract text and questions exactly as they appear in the provided document. Do NOT use your medical training to 'finish' or 'repair' questions.\n\n" +
                             "### MISSION CRITICAL RULES ###\n" +
-                            "1. TOP-DOWN SCAN: Process the document strictly from Top-Left to Bottom-Right. Maintain the original sequence of questions. Do NOT reorder them.\n" +
-                            "2. INK-ONLY POLICY: Extract ONLY the literal ink on the page. If the PDF says something, extract it. If it doesn't, DO NOT add it. Do NOT 'help' by adding common medical questions or topics.\n" +
-                            "3. ZERO HALLUCINATION: If you add a single medical concept or question that isn't physically visible, the task is a failure. No external knowledge allowed.\n" +
-                            "4. STOP PROTOCOL: Stop generating immediately once the printed text ends. Do NOT append your own examples or meta-commentary.\n\n" +
+                            "1. TOP-DOWN SCAN: Process the document strictly from top to bottom. Maintain the original sequence of questions. Do NOT reorder them.\n" +
+                            "2. TEXT-ONLY POLICY: Extract ONLY the literal information present in the document. If the document states something, extract it. If it doesn't, DO NOT add it. Do NOT 'help' by adding common medical questions or topics.\n" +
+                            "3. ZERO HALLUCINATION: If you add a single medical concept or question that isn't present in the document, the task is a failure. No external knowledge allowed.\n" +
+                            "4. STOP PROTOCOL: Stop generating immediately once the document text ends. Do NOT append your own examples or meta-commentary.\n\n" +
                             "### SPECIFIC EXTRACTION PROMPT ###\n" +
                             (customPrompt || 'Extract all relevant information from this question paper. Format the output as a JSON array of objects. For very long papers, you may use a Pipe-Separated list (PSV) with headers to stay within limits. Columns: S.No, Question, Paper, Subject, Month Year, Type, Section, University Name, CBME, Supplementary.') +
                             '\n\n### FINAL ENFORCEMENT ###: Output ONLY the requested data format (JSON/PSV). Zero creativity allowed.'
@@ -165,6 +170,7 @@ export async function extractFromPdf(pdfBase64, customPrompt, temperature, env, 
 
     // Nullify huge objects to free memory in Cloudflare Worker
     pdfBase64 = null;
+    documentText = null;
     requestBody = null;
     responseData = null;
 
