@@ -1,5 +1,4 @@
 name = "pdf-extractor-pro-worker"
-account_id = "7c5f549c00544db40ac09989afa5f6fb"
 main = "src/index.js"
 compatibility_date = "2024-12-30"
 compatibility_flags = [ "nodejs_compat" ]
