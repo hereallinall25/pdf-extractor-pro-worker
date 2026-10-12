@@ -5,6 +5,7 @@ import { extractFromPdf, chatWithGemini } from './vertexAi.js';
 import { generateExcel } from './excelService.js';
 import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
+import WordExtractor from 'word-extractor';
 
 const app = new Hono();
 
@@ -120,10 +121,40 @@ app.post('/api/extract', async (c) => {
             return c.json({ error: 'No file or document text uploaded' }, 400);
         }
 
+        let resolvedText = documentText;
+        let resolvedFileType = fileType || (uploadedFile?.name?.toLowerCase().endsWith('.docx') ? 'docx' : uploadedFile?.name?.toLowerCase().endsWith('.doc') ? 'doc' : 'pdf');
+
         let pdfBase64 = null;
         if (uploadedFile && uploadedFile instanceof File) {
-            const arrayBuffer = await uploadedFile.arrayBuffer();
-            pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
+            const fileNameLower = (uploadedFile.name || '').toLowerCase();
+            const isDocFile = resolvedFileType === 'doc' || fileNameLower.endsWith('.doc');
+
+            if (isDocFile) {
+                try {
+                    const arrayBuffer = await uploadedFile.arrayBuffer();
+                    const buffer = Buffer.from(arrayBuffer);
+                    const extractor = new WordExtractor();
+                    const extractedDoc = await extractor.extract(buffer);
+                    let fullText = '';
+                    const headers = extractedDoc.getHeaders();
+                    if (headers && headers.trim()) fullText += headers.trim() + '\n\n';
+                    const body = extractedDoc.getBody();
+                    if (body && body.trim()) fullText += body.trim() + '\n\n';
+                    const footers = extractedDoc.getFooters();
+                    if (footers && footers.trim()) fullText += footers.trim();
+
+                    resolvedText = fullText.trim();
+                    resolvedFileType = 'doc';
+                    if (!resolvedText) {
+                        throw new Error('Unable to extract text from .doc file. The document may be empty or corrupted.');
+                    }
+                } catch (docErr) {
+                    throw new Error(`Legacy .doc parsing failed: ${docErr.message}`);
+                }
+            } else {
+                const arrayBuffer = await uploadedFile.arrayBuffer();
+                pdfBase64 = Buffer.from(arrayBuffer).toString('base64');
+            }
         }
 
         const { data, usage } = await extractFromPdf(
@@ -132,8 +163,8 @@ app.post('/api/extract', async (c) => {
             temperature,
             c.env,
             model,
-            documentText,
-            fileType
+            resolvedText,
+            resolvedFileType
         );
 
         // Log usage for analytics
