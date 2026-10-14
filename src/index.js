@@ -94,6 +94,50 @@ app.get('/api/test-vertex', async (c) => {
     }
 });
 
+// Parse legacy .doc (Word 97-2003 binary) file into clean structured text
+app.post('/api/parse-doc', async (c) => {
+    try {
+        const body = await c.req.parseBody();
+        const uploadedFile = body.file;
+        if (!uploadedFile || !(uploadedFile instanceof File)) {
+            return c.json({ error: 'No .doc file uploaded' }, 400);
+        }
+
+        const arrayBuffer = await uploadedFile.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const extractor = new WordExtractor();
+        const extractedDoc = await extractor.extract(buffer);
+
+        let fullText = '';
+        const headers = extractedDoc.getHeaders();
+        if (headers && headers.trim()) fullText += headers.trim() + '\n\n';
+        const docBody = extractedDoc.getBody();
+        if (docBody && docBody.trim()) fullText += docBody.trim() + '\n\n';
+        const footers = extractedDoc.getFooters();
+        if (footers && footers.trim()) fullText += footers.trim();
+
+        const cleanText = fullText.trim();
+        if (!cleanText) {
+            return c.json({ error: 'No readable text could be extracted from this .doc file.' }, 422);
+        }
+
+        const paragraphs = cleanText
+            .split(/\r?\n/)
+            .map(p => p.trim())
+            .filter(Boolean);
+
+        return c.json({
+            success: true,
+            fileName: uploadedFile.name,
+            text: cleanText,
+            paragraphs
+        });
+    } catch (err) {
+        console.error('Error parsing .doc file in /api/parse-doc:', err);
+        return c.json({ error: `Failed to parse .doc file: ${err.message}` }, 500);
+    }
+});
+
 // Extract PDF Data
 app.post('/api/extract', async (c) => {
     let project = c.env.GOOGLE_CLOUD_PROJECT;
